@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- SEO Meta Tags -->
+    <title>BingeBox - Premium Cinematic Web Media Player</title>
+    <meta name="description" content="BingeBox is a next-generation web video player featuring dynamic ambient lighting, multi-band equalizer, playlist manager, subtitle syncing, video filter controls, and keyboard hotkeys." />
+    <meta name="keywords" content="video player, web video player, ambient light, equalizer, playlist, custom player, HTML5, canvas visualizer, subtitle sync" />
+    <meta name="author" content="Antigravity AI" />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <!-- Custom Window Titlebar for Desktop PC App -->
+    <div class="window-titlebar" id="custom-titlebar">
+      <div class="titlebar-drag-region">
+        <img class="titlebar-icon" src="/src/assets/logo.png" alt="BingeBox" style="width: 16px; height: 16px; object-fit: contain; flex-shrink: 0;">
+        <span class="titlebar-text">BingeBox Desktop</span>
+      </div>
+      <div class="titlebar-controls">
+        <button class="titlebar-btn" id="titlebar-minimize" title="Minimize">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+        <button class="titlebar-btn" id="titlebar-maximize" title="Maximize">
+          <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+        </button>
+        <button class="titlebar-btn titlebar-close" id="titlebar-close" title="Close App">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="app">
+      <!-- App Shell -->
+      <header class="app-header">
+        <div class="brand">
+          <div class="brand-logo" style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+            <img src="/src/assets/logo.png" alt="BingeBox" style="width: 100%; height: 100%; object-fit: contain;">
+          </div>
+          <h1>Binge<span>Box</span></h1>
+        </div>
+        <div class="header-actions">
+          <span class="status-indicator">
+            <span class="status-dot"></span>
+            <span class="status-text">Ambient Mode Enabled</span>
+          </span>
+        </div>
+      </header>
+
+      <main class="app-container">
+        <!-- Video Player Section -->
+        <section class="player-section" id="player-section">
+          <!-- Ambient Glow Background -->
+          <div class="ambient-glow-container">
+            <canvas id="ambient-glow-canvas"></canvas>
+          </div>
+
+          <!-- Video Wrapper Container -->
+          <div class="video-container" id="video-container">
+            <video id="main-video" preload="metadata" crossorigin="anonymous">
+              <!-- Source will be inserted dynamically -->
+              Your browser does not support HTML5 video.
+            </video>
+
+            <!-- Custom Subtitle Overlay -->
+            <div class="custom-subtitles-container" id="custom-subtitles-container">
+              <span id="subtitle-text"></span>
+            </div>
+
+            <!-- Equalizer / Visualizer Canvas Overlay -->
+            <canvas id="audio-visualizer-canvas" class="visualizer-canvas"></canvas>
+
+            <!-- Playback Status Central Popups (Play/Pause, volume, forward/rewind icons) -->
+            <div class="central-indicator" id="central-indicator">
+              <div class="indicator-icon">
+                <i data-lucide="play"></i>
+              </div>
+            </div>
+
+            <!-- Spinner Overlay for buffering -->
+            <div class="buffering-spinner" id="buffering-spinner">
+              <div class="spinner"></div>
+            </div>
+
+            <!-- Custom Control Bar -->
+            <div class="controls-bar" id="controls-bar">
+              <!-- Seek Bar Container -->
+              <div class="seek-bar-container" id="seek-bar-container">
+                <div class="seek-tooltip" id="seek-tooltip">00:00</div>
+                <div class="progress-bar-bg">
+                  <div class="buffer-bar" id="buffer-bar"></div>
+                  <div class="progress-bar" id="progress-bar">
+                    <div class="progress-handle"></div>
+                  </div>
+                  <div class="chapters-markers" id="chapters-markers"></div>
+                </div>
+              </div>
+
+              <!-- Controls Row -->
+              <div class="controls-row">
+                <div class="controls-left">
+                  <button class="control-btn" id="prev-btn" title="Previous Video (Shift+N)">
+                    <i data-lucide="skip-back"></i>
+                  </button>
+                  <button class="control-btn main-play-btn" id="play-btn" title="Play / Pause (Space)">
+                    <i data-lucide="play" id="play-icon"></i>
+                  </button>
+                  <button class="control-btn" id="next-btn" title="Next Video (N)">
+                    <i data-lucide="skip-forward"></i>
+                  </button>
+                  <button class="control-btn" id="shuffle-btn" title="Shuffle Playlist (S)">
+                    <i data-lucide="shuffle"></i>
+                  </button>
+                  <button class="control-btn" id="repeat-btn" title="Repeat Mode (R)">
+                    <i data-lucide="repeat"></i>
+                  </button>
+
+                  <div class="volume-container">
+                    <button class="control-btn" id="mute-btn" title="Mute / Unmute (M)">
+                      <i data-lucide="volume-2" id="mute-icon"></i>
+                    </button>
+                    <div class="volume-slider-wrapper">
+                      <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.05" value="0.7">
+                    </div>
+                  </div>
+
+                  <span class="time-display">
+                    <span id="current-time">00:00</span>
+                    <span class="time-separator">/</span>
+                    <span id="total-duration">00:00</span>
+                  </span>
+                </div>
+
+                <div class="controls-right">
+                  <!-- A-B Looper Button -->
+                  <button class="control-btn" id="ab-loop-btn" title="A-B Segment Loop (A)">
+                    <span id="ab-loop-badge" style="font-size: 0.65rem; font-weight: 800; border: 1.5px solid currentColor; padding: 1px 3px; border-radius: 4px;">A-B</span>
+                  </button>
+
+                  <!-- Subtitles Control Toggle -->
+                  <button class="control-btn" id="subtitles-toggle" title="Subtitles & Captions (C)">
+                    <i data-lucide="subtitles"></i>
+                  </button>
+
+                  <!-- Playback speed speed indicator/toggle -->
+                  <div class="control-dropdown-container">
+                    <button class="control-btn" id="speed-menu-btn" title="Playback Speed">
+                      <i data-lucide="gauge"></i>
+                      <span class="control-badge" id="speed-badge">1x</span>
+                    </button>
+                    <div class="dropdown-menu speed-menu" id="speed-menu">
+                      <button data-speed="0.25">0.25x</button>
+                      <button data-speed="0.5">0.5x</button>
+                      <button data-speed="0.75">0.75x</button>
+                      <button data-speed="1" class="active">Normal</button>
+                      <button data-speed="1.25">1.25x</button>
+                      <button data-speed="1.5">1.5x</button>
+                      <button data-speed="2">2x</button>
+                      <button data-speed="3">3x</button>
+                    </div>
+                  </div>
+
+                  <!-- Aspect Ratio Selector -->
+                  <div class="control-dropdown-container">
+                    <button class="control-btn" id="aspect-menu-btn" title="Aspect Ratio">
+                      <i data-lucide="monitor"></i>
+                    </button>
+                    <div class="dropdown-menu aspect-menu" id="aspect-menu">
+                      <button data-aspect="fit" class="active">Fit Screen</button>
+                      <button data-aspect="stretch">Stretch</button>
+                      <button data-aspect="16-9">16:9 Wide</button>
+                      <button data-aspect="4-3">4:3 Standard</button>
+                      <button data-aspect="21-9">21:9 UltraWide</button>
+                    </div>
+                  </div>
+
+                  <!-- Quick Settings Panel Trigger -->
+                  <button class="control-btn" id="video-settings-btn" title="Video Filters">
+                    <i data-lucide="sliders-horizontal"></i>
+                  </button>
+
+                  <!-- Picture-in-Picture Button -->
+                  <button class="control-btn" id="pip-btn" title="Picture in Picture (P)">
+                    <i data-lucide="picture-in-picture"></i>
+                  </button>
+
+                  <!-- Fullscreen Button -->
+                  <button class="control-btn" id="fullscreen-btn" title="Fullscreen (F)">
+                    <i data-lucide="maximize" id="fullscreen-icon"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Interactive Sidebar Section -->
+        <aside class="sidebar-section" id="sidebar-section">
+          <!-- Sidebar Navigation Tabs -->
+          <nav class="sidebar-tabs">
+            <button class="tab-btn active" data-tab="playlist" title="Media Playlist">
+              <i data-lucide="list-video"></i>
+              <span>Playlist</span>
+            </button>
+            <button class="tab-btn" data-tab="library" title="Local Folder Library">
+              <i data-lucide="folder-open"></i>
+              <span>Library</span>
+            </button>
+            <button class="tab-btn" data-tab="equalizer" title="Audio Settings & EQ">
+              <i data-lucide="sliders"></i>
+              <span>EQ & FX</span>
+            </button>
+            <button class="tab-btn" data-tab="filters" title="Style & Themes">
+              <i data-lucide="palette"></i>
+              <span>Style</span>
+            </button>
+            <button class="tab-btn" data-tab="subtitles" title="Subtitles & Sync">
+              <i data-lucide="type"></i>
+              <span>Subtitles</span>
+            </button>
+            <button class="tab-btn" data-tab="bookmarks" title="Bookmarks & Notes">
+              <i data-lucide="bookmark"></i>
+              <span>Bookmarks</span>
+            </button>
+            <button class="tab-btn" data-tab="shortcuts" title="Custom Shortcuts & Help">
+              <i data-lucide="keyboard"></i>
+              <span>Shortcuts</span>
+            </button>
+          </nav>
+
+          <!-- Sidebar Content Panels -->
+          <div class="sidebar-content">
+            <!-- Panel: Playlist -->
+            <div class="tab-panel active" id="panel-playlist">
+              <div class="panel-header">
+                <h3>Playlist Manager</h3>
+                <div class="panel-actions">
+                  <button class="panel-btn-action" id="clear-playlist" title="Clear Playlist">
+                    <i data-lucide="trash-2"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Input sources: drag and drop, file upload, or URL input -->
+              <div class="media-loader">
+                <div class="drag-drop-zone" id="drop-zone">
+                  <i data-lucide="upload-cloud"></i>
+                  <p>Drag & Drop local video file(s)</p>
+                  <span>or</span>
+                  <label class="file-upload-btn">
+                    Browse Files
+                    <input type="file" id="file-input" accept="video/*" multiple style="display: none;">
+                  </label>
+                </div>
+
+                <div class="url-input-group">
+                  <input type="text" id="url-input" placeholder="Paste video URL (e.g. mp4, m3u8)...">
+                  <button id="url-submit-btn" title="Add URL to Playlist">
+                    <i data-lucide="plus"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Playlist items container -->
+              <div class="playlist-items-wrapper">
+                <ul class="playlist-list" id="playlist-list">
+                  <!-- Dynamically populated playlist items -->
+                </ul>
+              </div>
+            </div>
+
+            <!-- Panel: Library Scanned Folders -->
+            <div class="tab-panel" id="panel-library">
+              <div class="panel-header">
+                <h3>Local Library</h3>
+                <button class="panel-btn-action reset-btn" id="scan-folder-btn" title="Scan Folder Directory">Scan Folder</button>
+              </div>
+
+              <div class="library-scanned-path" id="scanned-path-display" style="display: none; padding: 0.5rem 0.75rem; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; align-items: center; gap: 0.5rem; word-break: break-all;">
+                <i data-lucide="folder" style="color: var(--secondary); flex-shrink: 0; width: 16px; height: 16px;"></i>
+                <span id="scanned-path-text" class="field-hint" style="font-size: 0.75rem; color: var(--text-secondary);">No active folder scanned</span>
+              </div>
+
+              <!-- Scanned Library list -->
+              <div class="library-items-wrapper" style="flex: 1; overflow-y: auto;">
+                <ul class="playlist-list" id="library-list">
+                  <li class="no-bookmarks" id="library-placeholder">
+                    No folders scanned. Click "Scan Folder" above to scan and load video files from your hard drive.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Panel: Equalizer -->
+            <div class="tab-panel" id="panel-equalizer">
+              <div class="panel-header">
+                <h3>Audio Equalizer & FX</h3>
+                <button class="panel-btn-action reset-btn" id="reset-eq" title="Reset Audio">Reset</button>
+              </div>
+
+              <div class="eq-status-alert" id="audio-context-init-alert">
+                <i data-lucide="info"></i> Play video to enable advanced Audio processing.
+              </div>
+
+              <!-- Audio Booster Controls -->
+              <div class="eq-group">
+                <div class="eq-row">
+                  <label for="volume-booster">Volume Booster (Pre-amp)</label>
+                  <span class="eq-val" id="booster-val">100%</span>
+                </div>
+                <input type="range" id="volume-booster" class="range-slider" min="1" max="4" step="0.1" value="1">
+              </div>
+
+              <div class="eq-group">
+                <div class="eq-row">
+                  <label for="bass-boost">Bass Boost (Sub-bass)</label>
+                  <span class="eq-val" id="bass-boost-val">0 dB</span>
+                </div>
+                <input type="range" id="bass-boost" class="range-slider" min="0" max="15" step="0.5" value="0">
+              </div>
+
+              <!-- Multi-band EQ -->
+              <div class="eq-bands">
+                <h4>5-Band Equalizer</h4>
+                <div class="bands-container">
+                  <div class="band-slider">
+                    <span class="band-label">60Hz</span>
+                    <input type="range" class="eq-band-range" data-freq="60" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="band-val">0</span>
+                  </div>
+                  <div class="band-slider">
+                    <span class="band-label">250Hz</span>
+                    <input type="range" class="eq-band-range" data-freq="250" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="band-val">0</span>
+                  </div>
+                  <div class="band-slider">
+                    <span class="band-label">1kHz</span>
+                    <input type="range" class="eq-band-range" data-freq="1000" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="band-val">0</span>
+                  </div>
+                  <div class="band-slider">
+                    <span class="band-label">4kHz</span>
+                    <input type="range" class="eq-band-range" data-freq="4000" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="band-val">0</span>
+                  </div>
+                  <div class="band-slider">
+                    <span class="band-label">16kHz</span>
+                    <input type="range" class="eq-band-range" data-freq="16000" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="band-val">0</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Presets -->
+              <div class="eq-presets">
+                <h4>EQ Presets</h4>
+                <div class="presets-grid">
+                  <button class="preset-btn active" data-preset="flat">Flat</button>
+                  <button class="preset-btn" data-preset="bass">Bass Boost</button>
+                  <button class="preset-btn" data-preset="vocal">Vocal Enhancer</button>
+                  <button class="preset-btn" data-preset="electronic">Electronic</button>
+                  <button class="preset-btn" data-preset="classical">Classical</button>
+                </div>
+              </div>
+
+              <!-- Visualizer settings -->
+              <div class="visualizer-settings">
+                <h4>Audio Visualizer Overlay</h4>
+                <div class="toggle-group">
+                  <label for="visualizer-toggle">Enable Screen Spectrum</label>
+                  <input type="checkbox" id="visualizer-toggle" class="toggle-switch">
+                </div>
+                <div class="select-group">
+                  <label for="visualizer-type">Visualizer Style</label>
+                  <select id="visualizer-type" class="styled-select">
+                    <option value="bars">Modern Wave Bars</option>
+                    <option value="glowline">Ambient Neon Pulse</option>
+                    <option value="circular">Circular Halo</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Audio Sync & Voice Night Mode -->
+              <div class="audio-sync-night-mode" style="display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid var(--border-light); padding-top: 1rem; margin-top: 0.5rem;">
+                <h4>Audio Sync & Enhancements</h4>
+                
+                <div class="toggle-group">
+                  <label for="night-mode-toggle">Movie Night Mode (Dialogue Booster)</label>
+                  <input type="checkbox" id="night-mode-toggle" class="toggle-switch">
+                </div>
+                
+                <div class="toggle-group">
+                   <label for="normalizer-toggle">Auto Volume Normalizer (AGC)</label>
+                   <input type="checkbox" id="normalizer-toggle" class="toggle-switch">
+                </div>
+                
+                <div class="eq-group">
+                  <div class="eq-row">
+                    <label for="audio-sync-slider">Audio Sync Delay</label>
+                    <span class="eq-val" id="audio-sync-val">0 ms</span>
+                  </div>
+                  <input type="range" id="audio-sync-slider" class="range-slider" min="0" max="2" step="0.05" value="0">
+                  <p class="field-hint">Delays audio if it is out of sync (plays before the video).</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Panel: Video Filters -->
+            <div class="tab-panel" id="panel-filters">
+              <div class="panel-header">
+                <h3>Video Adjuster</h3>
+                <button class="panel-btn-action reset-btn" id="reset-filters" title="Reset Filters">Reset</button>
+              </div>
+
+              <div class="filter-controls">
+                <div class="filter-group">
+                  <div class="filter-row">
+                    <label for="filter-brightness">Brightness</label>
+                    <span class="filter-val" id="brightness-val">100%</span>
+                  </div>
+                  <input type="range" id="filter-brightness" class="range-slider" min="50" max="150" step="1" value="100">
+                </div>
+
+                <div class="filter-group">
+                  <div class="filter-row">
+                    <label for="filter-contrast">Contrast</label>
+                    <span class="filter-val" id="contrast-val">100%</span>
+                  </div>
+                  <input type="range" id="filter-contrast" class="range-slider" min="50" max="150" step="1" value="100">
+                </div>
+
+                <div class="filter-group">
+                  <div class="filter-row">
+                    <label for="filter-saturation">Saturation</label>
+                    <span class="filter-val" id="saturation-val">100%</span>
+                  </div>
+                  <input type="range" id="filter-saturation" class="range-slider" min="0" max="200" step="2" value="100">
+                </div>
+
+                <div class="filter-group">
+                  <div class="filter-row">
+                    <label for="filter-hue">Hue Rotation</label>
+                    <span class="filter-val" id="hue-val">0°</span>
+                  </div>
+                  <input type="range" id="filter-hue" class="range-slider" min="0" max="360" step="5" value="0">
+                </div>
+
+                <div class="filter-group">
+                  <div class="filter-row">
+                    <label for="filter-blur">Blur</label>
+                    <span class="filter-val" id="blur-val">0px</span>
+                  </div>
+                  <input type="range" id="filter-blur" class="range-slider" min="0" max="10" step="0.5" value="0">
+                </div>
+
+                <div class="filter-group">
+                  <div class="filter-row">
+                    <label for="filter-invert">Invert Colors</label>
+                    <span class="filter-val" id="invert-val">0%</span>
+                  </div>
+                  <input type="range" id="filter-invert" class="range-slider" min="0" max="100" step="5" value="0">
+                </div>
+
+                <!-- Theme / Effects -->
+                <div class="effect-presets-section">
+                  <h4>Quick Filters</h4>
+                  <div class="presets-grid">
+                    <button class="effect-btn active" data-effect="none">Default</button>
+                    <button class="effect-btn" data-effect="cinematic">Cinematic Contrast</button>
+                    <button class="effect-btn" data-effect="noir">Noir (B&W)</button>
+                    <button class="effect-btn" data-effect="warm">Warm Vintage</button>
+                    <button class="effect-btn" data-effect="cyberpunk">Cyberpunk Hue</button>
+                  </div>
+                </div>
+
+                <!-- Video Transformations & Zoom -->
+                <div class="video-transform-section" style="display: flex; flex-direction: column; gap: 0.75rem; border-top: 1px solid var(--border-light); padding-top: 1rem; margin-top: 0.5rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h4 style="font-size: 0.9rem; font-weight: 600; font-family: var(--font-mono); color: var(--text-main);">Transform & Zoom</h4>
+                    <button class="panel-btn-action reset-btn" id="reset-transform" title="Reset Transforms" style="font-size: 0.7rem; padding: 2px 6px; height: auto; border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 4px; background: rgba(139, 92, 246, 0.05); color: var(--primary); cursor: pointer;">Reset</button>
+                  </div>
+                  
+                  <!-- Rotation & Mirroring -->
+                  <div style="display: flex; gap: 0.75rem; width: 100%;">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 0.25rem;">
+                      <label style="font-size: 0.75rem; color: var(--text-secondary);">Rotation</label>
+                      <div class="presets-grid" style="grid-template-columns: repeat(4, 1fr); gap: 0.25rem;">
+                        <button class="transform-rot-btn active" data-rot="0" style="padding: 0.35rem 0.25rem; font-size: 0.7rem; font-family: var(--font-mono); border: 1.5px solid var(--border-light); border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-secondary);">0°</button>
+                        <button class="transform-rot-btn" data-rot="90" style="padding: 0.35rem 0.25rem; font-size: 0.7rem; font-family: var(--font-mono); border: 1.5px solid var(--border-light); border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-secondary);">90°</button>
+                        <button class="transform-rot-btn" data-rot="180" style="padding: 0.35rem 0.25rem; font-size: 0.7rem; font-family: var(--font-mono); border: 1.5px solid var(--border-light); border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-secondary);">180°</button>
+                        <button class="transform-rot-btn" data-rot="270" style="padding: 0.35rem 0.25rem; font-size: 0.7rem; font-family: var(--font-mono); border: 1.5px solid var(--border-light); border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-secondary);">270°</button>
+                      </div>
+                    </div>
+                    
+                    <div style="width: 85px; display: flex; flex-direction: column; gap: 0.25rem; flex-shrink: 0;">
+                      <label style="font-size: 0.75rem; color: var(--text-secondary);">Mirror</label>
+                      <button class="panel-btn-action" id="transform-mirror-btn" style="width: 100%; height: 26px; font-size: 0.7rem; display: flex; align-items: center; justify-content: center; gap: 4px; border: 1.5px solid var(--border-light); border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-secondary);">
+                        Flip H
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Zoom Slider -->
+                  <div class="filter-group" style="margin-bottom: 0;">
+                    <div class="filter-row" style="margin-bottom: 0.15rem;">
+                      <label for="transform-zoom">Zoom Level</label>
+                      <span class="filter-val" id="zoom-val">1.0x</span>
+                    </div>
+                    <input type="range" id="transform-zoom" class="range-slider" min="1.0" max="4.0" step="0.1" value="1.0">
+                  </div>
+
+                  <!-- Pan Position Sliders -->
+                  <div style="display: flex; gap: 0.5rem; width: 100%;">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 0.15rem;">
+                      <div class="filter-row" style="margin-bottom: 0;">
+                        <label for="transform-pan-x" style="font-size: 0.7rem;">Offset X</label>
+                        <span class="filter-val" id="pan-x-val" style="font-size: 0.7rem;">0px</span>
+                      </div>
+                      <input type="range" id="transform-pan-x" class="range-slider" min="-300" max="300" step="5" value="0">
+                    </div>
+                    
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 0.15rem;">
+                      <div class="filter-row" style="margin-bottom: 0;">
+                        <label for="transform-pan-y" style="font-size: 0.7rem;">Offset Y</label>
+                        <span class="filter-val" id="pan-y-val" style="font-size: 0.7rem;">0px</span>
+                      </div>
+                      <input type="range" id="transform-pan-y" class="range-slider" min="-300" max="300" step="5" value="0">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Dynamic Themes Selection -->
+                <div class="theme-selection-section" style="display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid var(--border-light); padding-top: 1rem; margin-top: 0.5rem;">
+                  <h4>Application Theme</h4>
+                  <div class="presets-grid" style="grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
+                    <button class="theme-btn active" data-theme="obsidian" style="font-size: 0.75rem; padding: 0.5rem 0.25rem;">Midnight Obsidian</button>
+                    <button class="theme-btn" data-theme="cyberpunk" style="font-size: 0.75rem; padding: 0.5rem 0.25rem;">Cyberpunk Neon</button>
+                    <button class="theme-btn" data-theme="frost" style="font-size: 0.75rem; padding: 0.5rem 0.25rem;">Glassmorphism Frost</button>
+                    <button class="theme-btn" data-theme="light" style="font-size: 0.75rem; padding: 0.5rem 0.25rem;">Classic Light</button>
+                  </div>
+                </div>
+
+                <!-- Accent Color Palette -->
+                <div class="accent-color-section" style="display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid var(--border-light); padding-top: 1rem; margin-top: 0.5rem;">
+                  <h4>Accent Color</h4>
+                  <div class="accent-colors-grid" style="display: flex; gap: 0.75rem; padding: 0.25rem 0;">
+                    <button class="accent-color-chip active" data-accent="violet" style="background-color: #8b5cf6; width: 28px; height: 28px; border-radius: 50%; border: 2px solid #fff; cursor: pointer; transition: transform 0.15s; outline: none;" title="Royal Violet"></button>
+                    <button class="accent-color-chip" data-accent="cyan" style="background-color: #06b6d4; width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.15s; outline: none;" title="Neon Cyan"></button>
+                    <button class="accent-color-chip" data-accent="emerald" style="background-color: #10b981; width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.15s; outline: none;" title="Electric Emerald"></button>
+                    <button class="accent-color-chip" data-accent="rose" style="background-color: #f43f5e; width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.15s; outline: none;" title="Ruby Rose"></button>
+                    <button class="accent-color-chip" data-accent="amber" style="background-color: #f59e0b; width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.15s; outline: none;" title="Sunset Amber"></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Panel: Subtitles -->
+            <div class="tab-panel" id="panel-subtitles">
+              <div class="panel-header">
+                <h3>Subtitles & Captions</h3>
+                <button class="panel-btn-action reset-btn" id="reset-subs" title="Reset Subs">Reset</button>
+              </div>
+
+              <!-- Upload local subtitle tracks -->
+              <div class="sub-loader">
+                <p class="section-label">Load External Subtitle File (.vtt, .srt)</p>
+                <label class="subtitle-upload-btn">
+                  <i data-lucide="file-text"></i> Load Subtitle File
+                  <input type="file" id="sub-file-input" accept=".vtt,.srt" style="display: none;">
+                </label>
+                <div class="active-sub-file" id="active-sub-file-name">No subtitle file loaded</div>
+              </div>
+
+              <div class="sub-controls">
+                <!-- Sync Shift -->
+                <div class="sub-sync-group">
+                  <div class="sub-sync-row">
+                    <label for="sub-delay">Subtitle Synchronization</label>
+                    <span class="sub-sync-val" id="sub-delay-val">0.0s</span>
+                  </div>
+                  <div class="sub-sync-controls">
+                    <button class="sync-adjust-btn" id="sub-delay-minus" title="Delay Subtitles (-0.5s)">-0.5s</button>
+                    <button class="sync-adjust-btn" id="sub-delay-reset">Sync 0.0s</button>
+                    <button class="sync-adjust-btn" id="sub-delay-plus" title="Advance Subtitles (+0.5s)">+0.5s</button>
+                  </div>
+                  <p class="field-hint">Use if subtitles are out of sync with the audio.</p>
+                </div>
+
+                <!-- Formatting Panel -->
+                <div class="sub-style-section">
+                  <h4>Subtitle Appearance</h4>
+
+                  <div class="select-group">
+                    <label for="sub-font-size">Font Size</label>
+                    <select id="sub-font-size" class="styled-select">
+                      <option value="16px">Small</option>
+                      <option value="20px">Medium</option>
+                      <option value="24px" selected>Regular (Default)</option>
+                      <option value="28px">Large</option>
+                      <option value="36px">Extra Large</option>
+                    </select>
+                  </div>
+
+                  <div class="select-group">
+                    <label for="sub-color">Font Color</label>
+                    <select id="sub-color" class="styled-select">
+                      <option value="#ffffff" selected>White</option>
+                      <option value="#facc15">Yellow</option>
+                      <option value="#22c55e">Green</option>
+                      <option value="#3b82f6">Blue</option>
+                    </select>
+                  </div>
+
+                  <div class="select-group">
+                    <label for="sub-bg-opacity">Background Box</label>
+                    <select id="sub-bg-opacity" class="styled-select">
+                      <option value="rgba(0,0,0,0)">None</option>
+                      <option value="rgba(0,0,0,0.4)">Translucent Grey</option>
+                      <option value="rgba(0,0,0,0.7)" selected>Dark Charcoal (Default)</option>
+                      <option value="rgba(0,0,0,0.95)">Solid Black</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Panel: Bookmarks & Chapters -->
+            <div class="tab-panel" id="panel-bookmarks">
+              <div class="panel-header">
+                <h3>Video Bookmarks</h3>
+                <span class="bookmark-count" id="bookmark-count">0 bookmarks</span>
+              </div>
+
+              <!-- Add Bookmark Form -->
+              <div class="add-bookmark-form">
+                <div class="form-row">
+                  <input type="text" id="bookmark-title-input" placeholder="Notes at current time...">
+                  <button id="add-bookmark-btn" title="Add Bookmark at Current Time">
+                    <i data-lucide="bookmark-plus"></i>
+                  </button>
+                </div>
+                <p class="field-hint">Bookmarks save to your browser's local storage.</p>
+              </div>
+
+              <!-- Bookmark List -->
+              <div class="bookmarks-list-wrapper">
+                <ul class="bookmarks-list" id="bookmarks-list">
+                  <!-- Dynamically populated bookmarks -->
+                  <li class="no-bookmarks" id="no-bookmarks-placeholder">
+                    No bookmarks saved for this video. Use the field above to add notes at specific timestamps.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Panel: Custom Keyboard Shortcuts -->
+            <div class="tab-panel" id="panel-shortcuts">
+              <div class="panel-header">
+                <h3>Custom Shortcuts</h3>
+                <button class="panel-btn-action reset-btn" id="reset-shortcuts" title="Reset Custom Shortcuts">Reset All</button>
+              </div>
+              <p class="field-hint">Click on a key badge to rebind it. System media keys are integrated globally.</p>
+
+              <div class="shortcuts-list" id="custom-shortcuts-list">
+                <!-- Dynamically populated via JavaScript -->
+              </div>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <!-- App Footer / Developer Info -->
+      <footer class="app-footer">
+        <p>&copy; 2026 BingeBox. Designed for cinematic web playback.</p>
+        <div class="footer-links">
+          <span>HTML5 Video Engine v2.0</span>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Main Entry Module JS -->
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

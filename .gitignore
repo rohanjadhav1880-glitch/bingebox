@@ -1,0 +1,27 @@
+# Engine binaries (Downloaded during build / packaged in Releases)
+engine/
+
+# PyInstaller build outputs
+dist/
+build/
+*.spec.bak
+*.bak
+
+# Thumbnail and local settings
+.thumbnails/
+bingebox_settings.json
+aether_settings.json
+test_audio.mp4
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Node.js dependencies
+node_modules/
+.vite/
+
+# System files
+.DS_Store
+Thumbs.db

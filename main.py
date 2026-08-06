@@ -1410,6 +1410,43 @@ class BingeBoxPlayer(QMainWindow):
         
         self.tabs.addTab(library_tab, "Library")
         
+        # TAB 8: About & Support
+        about_tab = QWidget()
+        about_layout = QVBoxLayout(about_tab)
+        about_layout.setContentsMargins(12, 12, 12, 12)
+        about_layout.setSpacing(12)
+
+        about_group = QGroupBox("About BingeBox")
+        about_g_layout = QVBoxLayout(about_group)
+        
+        app_title_lbl = QLabel("🎬 BingeBox Media Player v1.0.0")
+        app_title_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
+        about_g_layout.addWidget(app_title_lbl)
+        
+        app_desc_lbl = QLabel("100% Standalone, 100% Offline & Private Media Player.\nPowered by libmpv, PySide6, and FFmpeg.\nDeveloped with ❤️ by CAPTAIN NEMO.")
+        app_desc_lbl.setStyleSheet("color: var(--text-sec); font-size: 11px;")
+        app_desc_lbl.setWordWrap(True)
+        about_g_layout.addWidget(app_desc_lbl)
+        about_layout.addWidget(about_group)
+
+        support_group = QGroupBox("Support Development")
+        support_g_layout = QVBoxLayout(support_group)
+        
+        support_desc_lbl = QLabel("If you enjoy using BingeBox, consider supporting the developer to fund ongoing features and updates!")
+        support_desc_lbl.setStyleSheet("font-size: 11px;")
+        support_desc_lbl.setWordWrap(True)
+        support_g_layout.addWidget(support_desc_lbl)
+
+        self.support_btn = QPushButton("☕ Buy Me a Coffee")
+        self.support_btn.setStyleSheet("background-color: #FFDD00; color: #000000; font-weight: bold; border-radius: 6px; padding: 8px;")
+        self.support_btn.clicked.connect(self.open_buy_me_a_coffee)
+        support_g_layout.addWidget(self.support_btn)
+        
+        about_layout.addWidget(support_group)
+        about_layout.addStretch()
+        
+        self.tabs.addTab(about_tab, "About")
+        
         sidebar_layout.addWidget(self.tabs)
         content_layout.addWidget(self.sidebar)
         
@@ -2556,6 +2593,10 @@ class BingeBoxPlayer(QMainWindow):
                 idx = self.playlist.index(file_path)
                 self.load_video(idx)
                 self.play_video()
+
+    def open_buy_me_a_coffee(self):
+        import webbrowser
+        webbrowser.open("https://buymeacoffee.com/nemo7299")
 
 
 # ==========================================================================

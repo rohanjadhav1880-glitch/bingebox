@@ -4,6 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Privacy](https://img.shields.io/badge/privacy-100%25%20Offline%20%26%20Private-black.svg)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-orange.svg)](https://buymeacoffee.com/nemo7299)
 
 **BingeBox** is a high-performance, 100% standalone, 100% offline desktop video player built with **Python 3.10**, **PySide6 (Qt6)**, **libmpv**, and **FFmpeg**.
 
@@ -21,6 +22,14 @@ Designed from the ground up to require zero external dependencies (no VLC instal
 - **💬 Subtitle Engine**: Automatic embedded subtitle detection (`.srt`, `.ass`, `.vtt`) with custom delay adjustment offsets.
 - **🔁 A-B Looper & Playback Speed**: Precise segment looping and smooth playback speed scaling (`0.25x` to `4.0x`).
 - **📦 One-Click Windows Installer**: Built with Inno Setup for Start Menu, Desktop shortcuts, and right-click *"Play with BingeBox"* file Explorer integration.
+
+---
+
+## 💖 Support Development
+
+If you love using BingeBox and want to support ongoing development, new feature additions, and updates, consider buying the developer a coffee:
+
+☕ **[Buy Me a Coffee — nemo7299](https://buymeacoffee.com/nemo7299)**
 
 ---
 

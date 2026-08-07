@@ -82,4 +82,4 @@ Download the latest pre-compiled installer from our [GitHub Releases](https://gi
 
 Distributed under the **MIT License**. See `LICENSE` for details.
 
-Developed with ❤️ by **CAPTAIN NEMO**.
+Developed with by **CAPTAIN NEMO**.

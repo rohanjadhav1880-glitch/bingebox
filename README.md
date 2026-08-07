@@ -8,7 +8,7 @@
 
 **BingeBox** is a high-performance, 100% standalone, 100% offline desktop video player built with **Python 3.10**, **PySide6 (Qt6)**, **libmpv**, and **FFmpeg**.
 
-Designed from the ground up to require zero external dependencies (no VLC installation needed), BingeBox delivers hardware-accelerated 4K/8K GPU video playback with an ultra-sleek, modern dark UI.
+Designed from the ground up to require zero external dependencies (no VLC installation needed), BingeBox delivers hardware-accelerated 4K GPU video playback with an ultra-sleek, modern dark UI.
 
 ---
 

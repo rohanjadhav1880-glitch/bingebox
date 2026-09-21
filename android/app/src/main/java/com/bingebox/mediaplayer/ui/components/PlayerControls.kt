@@ -169,7 +169,7 @@ fun PlayerControls(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "BingeBox • 4K Hardware Accelerated",
+                            text = "BingeBox • Hardware Accelerated",
                             color = Color(0xFFA78BFA),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Normal

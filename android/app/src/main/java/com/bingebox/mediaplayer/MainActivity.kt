@@ -44,10 +44,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize libmpv native engine with full 4K GPU context
+        // Initialize libmpv native engine with full GPU context
         try {
             MPVLib.create(applicationContext)
-            MPVLib.setup4KPerformance()
+            MPVLib.setupHardwareAcceleration()
             MPVLib.init()
         } catch (e: Throwable) {
             Log.e("BingeBox", "Failed to initialize MPVLib", e)

@@ -90,7 +90,7 @@ fun MediaLibraryScreen(
                             color = Color(0xFF8B5CF6)
                         ) {
                             Text(
-                                text = "4K PRO",
+                                text = "PRO",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White,
@@ -163,7 +163,7 @@ fun MediaLibraryScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Supports 4K HEVC, AV1, MP4, MKV, HDR & Subtitles",
+                        text = "Supports HEVC, AV1, MP4, MKV, HDR & Subtitles",
                         color = Color(0xFF94A3B8),
                         fontSize = 12.sp
                     )

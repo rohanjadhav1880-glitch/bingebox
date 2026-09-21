@@ -1,6 +1,6 @@
 # 📱 BingeBox for Android (Native Port)
 
-BingeBox Android is built with **Kotlin**, **Jetpack Compose**, and native **libmpv (`libmpv.so`)** via Android NDK for high-performance zero-copy 4K hardware-accelerated video playback.
+BingeBox Android is built with **Kotlin**, **Jetpack Compose**, and native **libmpv (`libmpv.so`)** via Android NDK for high-performance hardware-accelerated video playback.
 
 ---
 
@@ -58,7 +58,7 @@ The generated APK will be available in:
 ---
 
 ## 📱 Features Included
-- ⚡ **Zero-Copy 4K Hardware Acceleration** (`hwdec="auto-safe"`, `vo="gpu"`, 150MB Demuxer Cache)
+- ⚡ **Hardware Acceleration** (`hwdec="auto-safe"`, `vo="gpu"`, 150MB Demuxer Cache)
 - 🔁 **A-B Repeat Looping**
 - 🎛️ **Audio Equalizer & Dialogue Booster (Night Mode)**
 - 📺 **Picture-in-Picture (PiP) Mode**

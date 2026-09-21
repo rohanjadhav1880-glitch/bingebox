@@ -202,8 +202,8 @@ object MPVLib {
         const val MPV_LOG_LEVEL_TRACE: Int = 70
     }
 
-    // High-performance 4K & Hardware Acceleration initializers
-    fun setup4KPerformance() {
+    // High-performance Hardware Acceleration initializers
+    fun setupHardwareAcceleration() {
         try {
             setOptionString("vo", "gpu")
             setOptionString("gpu-context", "android")

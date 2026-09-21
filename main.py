@@ -518,8 +518,47 @@ class ABLoopSlider(QSlider):
                 
                 # Draw highlight region
                 if self.ab_active:
-                    painter.fillRect(start_px, 2, end_px - start_px, self.height() - 4, QColor(6, 182, 212, 50))
+                    painter.fillRect(min(start_px, end_px), 2, abs(end_px - start_px), self.height() - 4, QColor(6, 182, 212, 50))
         painter.end()
+
+
+def resolve_dropped_paths(raw_items):
+    """
+    Synchronously and safely resolves dropped URLs or file paths into a list of supported media paths.
+    Recursively scans any dropped folders without blocking or spawning fragile detached threads.
+    """
+    raw_paths = []
+    for item in raw_items:
+        if hasattr(item, "toLocalFile"):
+            p = item.toLocalFile()
+            if not p:
+                p = item.toString()
+        else:
+            p = str(item)
+        if p:
+            raw_paths.append(p)
+
+    collected = []
+    for path in raw_paths:
+        if not path:
+            continue
+        if path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+            collected.append(path)
+            continue
+        norm_path = os.path.normpath(path)
+        if not os.path.exists(norm_path):
+            continue
+        if os.path.isdir(norm_path):
+            try:
+                for root, _, files in os.walk(norm_path):
+                    for f in sorted(files):
+                        if f.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
+                            collected.append(os.path.normpath(os.path.join(root, f)))
+            except Exception as e:
+                logging.warning(f"Failed to scan dropped folder {norm_path}: {e}")
+        elif norm_path.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
+            collected.append(norm_path)
+    return collected
 
 
 class FolderScanSignals(QObject):
@@ -532,26 +571,12 @@ class FolderScanWorker(QRunnable):
         self.signals = FolderScanSignals()
 
     def run(self):
-        collected = []
-        for path in self.raw_paths:
-            if not path:
-                continue
-            if path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
-                collected.append(path)
-                continue
-            if not os.path.exists(path):
-                continue
-            if os.path.isdir(path):
-                try:
-                    for root, _, files in os.walk(path):
-                        for f in sorted(files):
-                            if f.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
-                                collected.append(os.path.join(root, f))
-                except Exception as e:
-                    logging.warning(f"Failed to scan dropped folder {path}: {e}")
-            elif path.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
-                collected.append(path)
-        self.signals.finished.emit(collected)
+        collected = resolve_dropped_paths(self.raw_paths)
+        try:
+            self.signals.finished.emit(collected)
+        except Exception:
+            pass
+
 
 class DragDropListWidget(QListWidget):
     file_dropped = Signal(str)
@@ -582,11 +607,9 @@ class DragDropListWidget(QListWidget):
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            raw_paths = [url.toLocalFile() for url in event.mimeData().urls() if url.toLocalFile()]
-            if raw_paths:
-                worker = FolderScanWorker(raw_paths)
-                worker.signals.finished.connect(lambda files: self.files_dropped.emit(files) if files else None)
-                QThreadPool.globalInstance().start(worker)
+            collected = resolve_dropped_paths(event.mimeData().urls())
+            if collected:
+                self.files_dropped.emit(collected)
         else:
             super().dropEvent(event)
             self.order_changed.emit()
@@ -833,18 +856,28 @@ class BingeBoxPlayer(QMainWindow):
                     self.scanned_folder = data.get("scanned_folder", "")
                     self.bookmarks = data.get("bookmarks", {})
                     self.controls_theme = data.get("controls_theme", "semi_transparent")
-                    self.preamp = float(data.get("preamp", 0.0))
-                    self.volume = int(data.get("volume", 80))
+                    try:
+                        self.preamp = float(data.get("preamp", 0.0))
+                    except (ValueError, TypeError):
+                        self.preamp = 0.0
+                    try:
+                        self.volume = int(data.get("volume", 80))
+                    except (ValueError, TypeError):
+                        self.volume = 80
                     self.is_muted = bool(data.get("is_muted", False))
                     saved_eq = data.get("eq_bands", [])
                     if isinstance(saved_eq, list) and len(saved_eq) == 10:
-                        self.eq_bands = [float(x) for x in saved_eq]
+                        try:
+                            self.eq_bands = [float(x) for x in saved_eq]
+                        except (ValueError, TypeError):
+                            self.eq_bands = [0.0] * 10
                         
                     # Merge loaded hotkeys to handle backwards compatibility
                     saved_hotkeys = data.get("hotkeys", {})
-                    for act, conf in DEFAULT_HOTKEYS.items():
-                        if act in saved_hotkeys:
-                            self.hotkeys[act]["key"] = saved_hotkeys[act]["key"]
+                    if isinstance(saved_hotkeys, dict):
+                        for act, conf in DEFAULT_HOTKEYS.items():
+                            if act in saved_hotkeys and isinstance(saved_hotkeys[act], dict) and "key" in saved_hotkeys[act]:
+                                self.hotkeys[act]["key"] = str(saved_hotkeys[act]["key"])
         except Exception as e:
             logging.error(f"Failed to load settings: {e}")
 
@@ -892,7 +925,8 @@ class BingeBoxPlayer(QMainWindow):
         if not video_path:
             return
             
-        thumb_path = get_thumbnail_cache_path(video_path)
+        norm_path = os.path.normpath(video_path) if not video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")) else video_path
+        thumb_path = get_thumbnail_cache_path(norm_path)
         if not thumb_path:
             return
             
@@ -902,22 +936,28 @@ class BingeBoxPlayer(QMainWindow):
             return
             
         # Deduplication check
-        if video_path in self._pending_thumbnail_paths:
+        if norm_path in self._pending_thumbnail_paths:
             return
-        self._pending_thumbnail_paths.add(video_path)
+        self._pending_thumbnail_paths.add(norm_path)
         
         # 3. If not cached, fetch in background thread
-        worker = ThumbnailWorker(video_path)
+        worker = ThumbnailWorker(norm_path)
         self._active_workers.add(worker)
         
         def on_finished(v_path, t_path):
-            self._active_workers.discard(worker)
-            self._pending_thumbnail_paths.discard(v_path)
-            self.update_ui_thumbnails(v_path, t_path)
+            try:
+                self._active_workers.discard(worker)
+                self._pending_thumbnail_paths.discard(v_path)
+                self.update_ui_thumbnails(v_path, t_path)
+            except Exception:
+                pass
             
         def on_failed(v_path):
-            self._active_workers.discard(worker)
-            self._pending_thumbnail_paths.discard(v_path)
+            try:
+                self._active_workers.discard(worker)
+                self._pending_thumbnail_paths.discard(v_path)
+            except Exception:
+                pass
                     
         worker.signals.finished.connect(on_finished)
         worker.signals.failed.connect(on_failed)
@@ -1090,7 +1130,6 @@ class BingeBoxPlayer(QMainWindow):
         buttons_row.setSpacing(12)
         
         # Left controls buttons
-        # Left controls buttons
         self.prev_btn = QPushButton("⏮", self.controls_panel)
         self.prev_btn.setFixedSize(30, 26)
         self.prev_btn.clicked.connect(self.play_previous)
@@ -1101,6 +1140,7 @@ class BingeBoxPlayer(QMainWindow):
         self.play_btn.setObjectName("play_btn")
         self.play_btn.setFixedSize(36, 30)
         self.play_btn.clicked.connect(self.toggle_play)
+        self.play_btn.setToolTip("Play / Pause (Space)")
         buttons_row.addWidget(self.play_btn)
         
         self.next_btn = QPushButton("⏭", self.controls_panel)
@@ -1115,6 +1155,7 @@ class BingeBoxPlayer(QMainWindow):
         self.shuffle_btn.setProperty("active", False)
         self.shuffle_btn.setFixedSize(30, 26)
         self.shuffle_btn.clicked.connect(self.toggle_shuffle)
+        self.shuffle_btn.setToolTip("Toggle Shuffle (S)")
         buttons_row.addWidget(self.shuffle_btn)
         
         self.repeat_btn = QPushButton("🔁", self.controls_panel)
@@ -1122,6 +1163,7 @@ class BingeBoxPlayer(QMainWindow):
         self.repeat_btn.setProperty("repeat_mode", "off")
         self.repeat_btn.setFixedSize(30, 26)
         self.repeat_btn.clicked.connect(self.toggle_repeat)
+        self.repeat_btn.setToolTip("Toggle Repeat (Off / All / One) (R)")
         buttons_row.addWidget(self.repeat_btn)
         
         buttons_row.addSpacing(10)
@@ -1133,6 +1175,7 @@ class BingeBoxPlayer(QMainWindow):
         self.mute_btn = QPushButton(mute_symbol, self.controls_panel)
         self.mute_btn.setFixedSize(30, 26)
         self.mute_btn.clicked.connect(self.toggle_mute)
+        self.mute_btn.setToolTip("Mute / Unmute (M)")
         buttons_row.addWidget(self.mute_btn)
         
         self.volume_slider = QSlider(Qt.Orientation.Horizontal, self.controls_panel)
@@ -1140,6 +1183,7 @@ class BingeBoxPlayer(QMainWindow):
         self.volume_slider.setValue(vol_init)
         self.volume_slider.setFixedWidth(80)
         self.volume_slider.valueChanged.connect(self.volume_changed)
+        self.volume_slider.setToolTip("Volume (Up/Down)")
         buttons_row.addWidget(self.volume_slider)
         
         buttons_row.addStretch()
@@ -1148,6 +1192,7 @@ class BingeBoxPlayer(QMainWindow):
         self.ab_loop_btn = QPushButton("A-B Loop", self.controls_panel)
         self.ab_loop_btn.setFixedSize(80, 26)
         self.ab_loop_btn.clicked.connect(self.trigger_ab_loop)
+        self.ab_loop_btn.setToolTip("A-B Loop (L)")
         buttons_row.addWidget(self.ab_loop_btn)
         
         # Aspect Ratio Selector
@@ -2126,23 +2171,30 @@ class BingeBoxPlayer(QMainWindow):
             return
             
         video_path = self.playlist[self.current_index]
-        thumb_path = get_thumbnail_cache_path(video_path)
+        norm_video_path = os.path.normpath(video_path) if not video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")) else video_path
+        thumb_path = get_thumbnail_cache_path(norm_video_path)
         if not thumb_path or (os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0):
             return
             
-        if video_path in self._pending_thumbnail_paths:
+        if norm_video_path in self._pending_thumbnail_paths:
             return
-        self._pending_thumbnail_paths.add(video_path)
+        self._pending_thumbnail_paths.add(norm_video_path)
             
-        worker = ThumbnailWorker(video_path)
+        worker = ThumbnailWorker(norm_video_path)
         self._active_workers.add(worker)
         def on_finished(v_path, t_path):
-            self._active_workers.discard(worker)
-            self._pending_thumbnail_paths.discard(v_path)
-            self.update_ui_thumbnails(v_path, t_path)
+            try:
+                self._active_workers.discard(worker)
+                self._pending_thumbnail_paths.discard(v_path)
+                self.update_ui_thumbnails(v_path, t_path)
+            except Exception:
+                pass
         def on_failed(v_path):
-            self._active_workers.discard(worker)
-            self._pending_thumbnail_paths.discard(v_path)
+            try:
+                self._active_workers.discard(worker)
+                self._pending_thumbnail_paths.discard(v_path)
+            except Exception:
+                pass
         worker.signals.finished.connect(on_finished)
         worker.signals.failed.connect(on_failed)
         self.thread_pool.start(worker)
@@ -2744,6 +2796,21 @@ class BingeBoxPlayer(QMainWindow):
         if event.type() == QEvent.Type.MouseMove:
             if self.isFullScreen():
                 self.show_controls_in_fullscreen()
+
+        if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            if event.mimeData().hasUrls():
+                event.acceptProposedAction()
+                return True
+
+        if event.type() == QEvent.Type.Drop:
+            if event.mimeData().hasUrls():
+                event.acceptProposedAction()
+                is_playlist = (
+                    obj == getattr(self, 'playlist_list', None)
+                    or (hasattr(self, 'playlist_list') and hasattr(self.playlist_list, 'viewport') and obj == self.playlist_list.viewport())
+                )
+                self.handle_dropped_urls(event.mimeData().urls(), play_now=not is_playlist)
+                return True
                 
         if event.type() == QEvent.Type.KeyPress:
             # If we are in rebinding mode, capture the key press globally
@@ -2822,22 +2889,19 @@ class BingeBoxPlayer(QMainWindow):
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.handle_dropped_urls(event.mimeData().urls())
+            self.handle_dropped_urls(event.mimeData().urls(), play_now=True)
         else:
             event.ignore()
 
-    def handle_dropped_urls(self, urls):
-        raw_paths = [url.toLocalFile() if hasattr(url, "toLocalFile") else str(url) for url in urls]
-        raw_paths = [p for p in raw_paths if p]
-        if not raw_paths:
+    def handle_dropped_urls(self, urls, play_now=True):
+        collected_files = resolve_dropped_paths(urls)
+        if not collected_files:
             return
             
-        def on_scan_done(collected_files):
-            if not collected_files:
-                return
-            had_files = len(self.playlist) > 0
-            first_new_path = collected_files[0]
-            self.add_local_files(collected_files, auto_load=False)
+        had_files = len(self.playlist) > 0
+        first_new_path = collected_files[0]
+        self.add_local_files(collected_files, auto_load=False)
+        if play_now:
             if not had_files and len(self.playlist) > 0:
                 self.load_video(0, autoplay=True)
                 self.play_video()
@@ -2845,10 +2909,10 @@ class BingeBoxPlayer(QMainWindow):
                 idx = self.playlist.index(first_new_path)
                 self.load_video(idx, autoplay=True)
                 self.play_video()
-
-        worker = FolderScanWorker(raw_paths)
-        worker.signals.finished.connect(on_scan_done)
-        self.thread_pool.start(worker)
+        else:
+            if not had_files and len(self.playlist) > 0:
+                self.load_video(0, autoplay=True)
+                self.play_video()
 
     def trigger_shortcut_action(self, action):
         if action == "play_pause":
@@ -3243,11 +3307,10 @@ class BingeBoxPlayer(QMainWindow):
             self.mpv_player = None
         if hasattr(self, 'thread_pool') and self.thread_pool:
             try:
-                self.thread_pool.waitForDone(1000)
+                self.thread_pool.clear()
+                self.thread_pool.waitForDone(500)
             except Exception:
                 pass
-        if hasattr(self, '_active_workers'):
-            self._active_workers.clear()
         event.accept()
 
 

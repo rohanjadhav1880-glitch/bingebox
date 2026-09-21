@@ -3,28 +3,24 @@
 import os
 import sys
 
-# Lean Engine Binaries (Only active components: libmpv, FFmpeg, FFprobe, MediaInfo, D3DCompiler)
-engine_binaries = [
-    ('engine/libmpv-2.dll', 'engine'),
-    ('engine/ffmpeg.exe', 'engine'),
-    ('engine/ffprobe.exe', 'engine'),
-    ('engine/MediaInfo.dll', 'engine'),
-    ('engine/D3DCompiler_47_cor3.dll', 'engine')
-]
+# Lean Engine Binaries (Only active components: libmpv, FFmpeg, D3DCompiler)
+engine_binaries = []
+for binary in ['engine/libmpv-2.dll', 'engine/ffmpeg.exe', 'engine/D3DCompiler_47_cor3.dll']:
+    if os.path.exists(binary):
+        engine_binaries.append((binary, 'engine'))
 
 # Application Data Bundles
 app_datas = [
     ('bingebox_icon.ico', '.'),
     ('THIRD_PARTY_LICENSES.txt', '.'),
-    ('LICENSE', '.'),
-    ('src/assets', 'src/assets'),
-    ('public', 'public')
+    ('LICENSE', '.')
 ]
 
 # Hidden Imports Specification
 app_hiddenimports = [
     'mpv',
     'PySide6',
+    'PySide6.QtNetwork',
     'shiboken6'
 ]
 
@@ -37,7 +33,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tkinter', 'matplotlib', 'scipy', 'numpy', 'IPython'],
     noarchive=False,
     optimize=2,
 )

@@ -1,6 +1,9 @@
 import os
 import sys
 import json
+import copy
+import logging
+import math
 
 # Setup Local Engine Paths for libmpv & FFmpeg
 search_paths = []
@@ -52,6 +55,51 @@ import mpv
 from PySide6.QtCore import *
 from PySide6.QtGui import *
 from PySide6.QtWidgets import *
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+QCoreApplication.setApplicationName("BingeBox")
+QCoreApplication.setOrganizationName("BingeBox")
+
+def get_resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    if getattr(sys, 'frozen', False):
+        return os.path.join(os.path.dirname(sys.executable), relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
+def get_app_data_dir():
+    app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
+    if not app_data:
+        app_data = os.path.expanduser("~/.bingebox")
+    elif not app_data.endswith("BingeBox"):
+        app_data = os.path.join(app_data, "BingeBox")
+    os.makedirs(app_data, exist_ok=True)
+    return app_data
+
+def get_settings_file_path():
+    return os.path.join(get_app_data_dir(), "bingebox_settings.json")
+
+def get_thumbnails_cache_dir():
+    cache_dir = os.path.join(get_app_data_dir(), "thumbnails")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+# Setup file logging and crash handler for console-less windowed builds
+LOG_FILE_PATH = os.path.join(get_app_data_dir(), "bingebox.log")
+logging.basicConfig(
+    filename=LOG_FILE_PATH,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    encoding="utf-8"
+)
+
+def log_uncaught_exceptions(exctype, value, tb):
+    import traceback
+    err_msg = "".join(traceback.format_exception(exctype, value, tb))
+    logging.critical(f"Uncaught exception:\n{err_msg}")
+    print(err_msg, file=sys.stderr)
+
+sys.excepthook = log_uncaught_exceptions
 
 SUPPORTED_MEDIA_EXTENSIONS = (
     '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts',
@@ -493,32 +541,6 @@ class LibraryListWidget(QListWidget):
         pass
 
 
-def get_resource_path(relative_path):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    if getattr(sys, 'frozen', False):
-        return os.path.join(os.path.dirname(sys.executable), relative_path)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
-
-
-def get_app_data_dir():
-    app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
-    if not app_data:
-        app_data = os.path.expanduser("~/.bingebox")
-    os.makedirs(app_data, exist_ok=True)
-    return app_data
-
-
-def get_settings_file_path():
-    return os.path.join(get_app_data_dir(), "bingebox_settings.json")
-
-
-def get_thumbnails_cache_dir():
-    cache_dir = os.path.join(get_app_data_dir(), "thumbnails")
-    os.makedirs(cache_dir, exist_ok=True)
-    return cache_dir
-
-
 def get_video_thumbnail_static(video_path):
     if not video_path:
         return None
@@ -529,7 +551,12 @@ def get_video_thumbnail_static(video_path):
         
     cache_dir = get_thumbnails_cache_dir()
     import hashlib
-    path_hash = hashlib.md5(video_path.encode('utf-8')).hexdigest()
+    try:
+        mtime = os.path.getmtime(video_path) if os.path.exists(video_path) else 0
+    except Exception:
+        mtime = 0
+    hash_seed = f"{video_path}_{mtime}"
+    path_hash = hashlib.md5(hash_seed.encode('utf-8'), usedforsecurity=False).hexdigest()
     thumb_path = os.path.join(cache_dir, f"{path_hash}.png")
     
     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
@@ -538,18 +565,18 @@ def get_video_thumbnail_static(video_path):
     try:
         import subprocess
         creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        cmd = [FFMPEG_BIN, "-y", "-ss", "00:00:02", "-i", video_path, "-vframes", "1", "-vf", "scale=160:90", thumb_path]
+        cmd = [FFMPEG_BIN, "-nostdin", "-loglevel", "error", "-y", "-ss", "00:00:02", "-i", video_path, "-vframes", "1", "-vf", "scale=160:90", thumb_path]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags, timeout=5)
         if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
             return thumb_path
             
         # Retry at 0s if 2s seek failed (e.g. short clips)
-        cmd = [FFMPEG_BIN, "-y", "-ss", "00:00:00", "-i", video_path, "-vframes", "1", "-vf", "scale=160:90", thumb_path]
+        cmd = [FFMPEG_BIN, "-nostdin", "-loglevel", "error", "-y", "-ss", "00:00:00", "-i", video_path, "-vframes", "1", "-vf", "scale=160:90", thumb_path]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags, timeout=3)
         if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
             return thumb_path
     except Exception as e:
-        print("Failed to extract thumbnail via FFmpeg:", e)
+        logging.warning(f"Failed to extract thumbnail via FFmpeg for {video_path}: {e}")
         
     return None
 
@@ -568,7 +595,7 @@ class ThumbnailWorker(QRunnable):
             if thumb_path:
                 self.signals.finished.emit(self.video_path, thumb_path)
         except Exception as e:
-            print("Error in thumbnail worker:", e)
+            logging.warning(f"Error in thumbnail worker: {e}")
 
 
 # ==========================================================================
@@ -592,7 +619,9 @@ class BingeBoxPlayer(QMainWindow):
     def __init__(self, initial_file=None):
         super().__init__()
         self.initial_file = initial_file
+        self.setAcceptDrops(True)
         self._active_workers = set()
+        self._pending_thumbnail_paths = set()
         
         # State settings
         self.playlist = []
@@ -605,8 +634,11 @@ class BingeBoxPlayer(QMainWindow):
         self.night_mode = False
         self.normalizer = False
         self.controls_theme = "semi_transparent"
+        self.volume = 80
+        self.is_muted = False
         
         self.thread_pool = QThreadPool.globalInstance()
+        self.thread_pool.setMaxThreadCount(min(4, os.cpu_count() or 2))
         self.scanned_folder = ""
         self.bookmarks = {}
         
@@ -648,7 +680,7 @@ class BingeBoxPlayer(QMainWindow):
         self.preamp = 0.0
         
         # Keybindings state
-        self.hotkeys = DEFAULT_HOTKEYS.copy()
+        self.hotkeys = copy.deepcopy(DEFAULT_HOTKEYS)
         self.rebinding_action = None
         
         # Load local storage if exists
@@ -701,16 +733,22 @@ class BingeBoxPlayer(QMainWindow):
     def load_settings(self):
         try:
             settings_file = get_settings_file_path()
-            # Migration check from local legacy folder
+            # Migration check from local application root directory (never relative cwd)
             if not os.path.exists(settings_file):
-                for legacy in ("bingebox_settings.json", "aether_settings.json"):
-                    if os.path.exists(legacy):
-                        try:
-                            import shutil
-                            shutil.copy2(legacy, settings_file)
-                            break
-                        except Exception:
-                            pass
+                check_dirs = []
+                if getattr(sys, 'frozen', False):
+                    check_dirs.append(os.path.dirname(sys.executable))
+                check_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+                for d in check_dirs:
+                    for legacy_name in ("bingebox_settings.json", "aether_settings.json"):
+                        legacy_path = os.path.join(d, legacy_name)
+                        if os.path.exists(legacy_path):
+                            try:
+                                import shutil
+                                shutil.copy2(legacy_path, settings_file)
+                                break
+                            except Exception:
+                                pass
                 
             if os.path.exists(settings_file):
                 with open(settings_file, "r", encoding="utf-8") as f:
@@ -724,6 +762,8 @@ class BingeBoxPlayer(QMainWindow):
                     self.bookmarks = data.get("bookmarks", {})
                     self.controls_theme = data.get("controls_theme", "semi_transparent")
                     self.preamp = float(data.get("preamp", 0.0))
+                    self.volume = int(data.get("volume", 80))
+                    self.is_muted = bool(data.get("is_muted", False))
                     saved_eq = data.get("eq_bands", [])
                     if isinstance(saved_eq, list) and len(saved_eq) == 10:
                         self.eq_bands = [float(x) for x in saved_eq]
@@ -734,27 +774,33 @@ class BingeBoxPlayer(QMainWindow):
                         if act in saved_hotkeys:
                             self.hotkeys[act]["key"] = saved_hotkeys[act]["key"]
         except Exception as e:
-            print("Failed to load settings:", e)
+            logging.error(f"Failed to load settings: {e}")
 
     def save_settings(self):
         try:
             settings_file = get_settings_file_path()
-            with open(settings_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "playlist": self.playlist,
-                    "theme": self.theme,
-                    "accent": self.accent,
-                    "night_mode": self.night_mode,
-                    "normalizer": self.normalizer,
-                    "hotkeys": self.hotkeys,
-                    "scanned_folder": getattr(self, "scanned_folder", ""),
-                    "bookmarks": getattr(self, "bookmarks", {}),
-                    "controls_theme": getattr(self, "controls_theme", "semi_transparent"),
-                    "preamp": getattr(self, "preamp", 0.0),
-                    "eq_bands": getattr(self, "eq_bands", [0.0] * 10)
-                }, f, indent=2)
+            tmp_file = settings_file + ".tmp"
+            vol_val = self.volume_slider.value() if hasattr(self, 'volume_slider') else getattr(self, 'volume', 80)
+            data = {
+                "playlist": self.playlist,
+                "theme": self.theme,
+                "accent": self.accent,
+                "night_mode": self.night_mode,
+                "normalizer": self.normalizer,
+                "hotkeys": self.hotkeys,
+                "scanned_folder": getattr(self, "scanned_folder", ""),
+                "bookmarks": getattr(self, "bookmarks", {}),
+                "controls_theme": getattr(self, "controls_theme", "semi_transparent"),
+                "preamp": getattr(self, "preamp", 0.0),
+                "eq_bands": getattr(self, "eq_bands", [0.0] * 10),
+                "volume": vol_val,
+                "is_muted": getattr(self, "is_muted", False)
+            }
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_file, settings_file)
         except Exception as e:
-            print("Failed to save settings:", e)
+            logging.error(f"Failed to save settings: {e}")
 
     def request_thumbnail(self, video_path, item):
         # 1. Set default icon first
@@ -770,29 +816,31 @@ class BingeBoxPlayer(QMainWindow):
         # 2. Check if already cached on disk
         cache_dir = get_thumbnails_cache_dir()
         import hashlib
-        path_hash = hashlib.md5(video_path.encode('utf-8')).hexdigest()
+        try:
+            mtime = os.path.getmtime(video_path) if os.path.exists(video_path) else 0
+        except Exception:
+            mtime = 0
+        hash_seed = f"{video_path}_{mtime}"
+        path_hash = hashlib.md5(hash_seed.encode('utf-8'), usedforsecurity=False).hexdigest()
         thumb_path = os.path.join(cache_dir, f"{path_hash}.png")
         
         if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
             item.setIcon(QIcon(thumb_path))
             return
             
+        # Deduplication check
+        if video_path in self._pending_thumbnail_paths:
+            return
+        self._pending_thumbnail_paths.add(video_path)
+        
         # 3. If not cached, fetch in background thread
         worker = ThumbnailWorker(video_path)
         self._active_workers.add(worker)
         
         def on_finished(v_path, t_path):
             self._active_workers.discard(worker)
-            # Update icons for all matching items in playlist
-            for i in range(self.playlist_list.count()):
-                li = self.playlist_list.item(i)
-                if li and li.data(Qt.ItemDataRole.UserRole) == v_path:
-                    li.setIcon(QIcon(t_path))
-            # and in library
-            for i in range(self.library_list.count()):
-                li = self.library_list.item(i)
-                if li and li.data(Qt.ItemDataRole.UserRole) == v_path:
-                    li.setIcon(QIcon(t_path))
+            self._pending_thumbnail_paths.discard(v_path)
+            self.update_ui_thumbnails(v_path, t_path)
                     
         worker.signals.finished.connect(on_finished)
         self.thread_pool.start(worker)
@@ -875,9 +923,17 @@ class BingeBoxPlayer(QMainWindow):
         self.video_container = QWidget(self.video_area)
         self.video_container.setStyleSheet("background-color: #000000;")
         self.video_container.resizeEvent = self.video_container_resized
+        self.video_container.setAcceptDrops(True)
+        self.video_container.dragEnterEvent = self.dragEnterEvent
+        self.video_container.dragMoveEvent = self.dragMoveEvent
+        self.video_container.dropEvent = self.dropEvent
         
         self.video_frame = QFrame(self.video_container)
         self.video_frame.setStyleSheet("background-color: #000000;")
+        self.video_frame.setAcceptDrops(True)
+        self.video_frame.dragEnterEvent = self.dragEnterEvent
+        self.video_frame.dragMoveEvent = self.dragMoveEvent
+        self.video_frame.dropEvent = self.dropEvent
         
         # Enable mouse tracking for fullscreen controls detection
         self.setMouseTracking(True)
@@ -886,6 +942,8 @@ class BingeBoxPlayer(QMainWindow):
         self.video_frame.setMouseTracking(True)
         
         # Initialize mpv player and attach renderer to video_frame window handle
+        vol_init = getattr(self, 'volume', 80)
+        mute_init = getattr(self, 'is_muted', False)
         try:
             self.mpv_player = mpv.MPV(
                 wid=str(int(self.video_frame.winId())),
@@ -894,16 +952,16 @@ class BingeBoxPlayer(QMainWindow):
                 demuxer_max_bytes="150MiB",
                 demuxer_max_back_bytes="50MiB",
                 keep_open=True,
-                volume=80,
-                mute=False
+                volume=vol_init,
+                mute=mute_init
             )
         except Exception as e:
-            print("Fallback mpv initialization:", e)
+            logging.warning(f"Fallback mpv initialization: {e}")
             self.mpv_player = mpv.MPV(
                 wid=str(int(self.video_frame.winId())),
                 keep_open=True,
-                volume=80,
-                mute=False
+                volume=vol_init,
+                mute=mute_init
             )
         
         self.video_area_layout.addWidget(self.video_container, 1)
@@ -981,14 +1039,17 @@ class BingeBoxPlayer(QMainWindow):
         buttons_row.addSpacing(10)
         
         # Volume
-        self.mute_btn = QPushButton("🔊", self.controls_panel)
+        vol_init = getattr(self, 'volume', 80)
+        mute_init = getattr(self, 'is_muted', False)
+        mute_symbol = "🔇" if mute_init else ("🔈" if vol_init < 50 else ("🔉" if vol_init < 100 else "🔊"))
+        self.mute_btn = QPushButton(mute_symbol, self.controls_panel)
         self.mute_btn.setFixedSize(30, 26)
         self.mute_btn.clicked.connect(self.toggle_mute)
         buttons_row.addWidget(self.mute_btn)
         
         self.volume_slider = QSlider(Qt.Orientation.Horizontal, self.controls_panel)
         self.volume_slider.setRange(0, 150) # Allow up to 150% volume boost
-        self.volume_slider.setValue(80)
+        self.volume_slider.setValue(vol_init)
         self.volume_slider.setFixedWidth(80)
         self.volume_slider.valueChanged.connect(self.volume_changed)
         buttons_row.addWidget(self.volume_slider)
@@ -1041,7 +1102,7 @@ class BingeBoxPlayer(QMainWindow):
         play_tab_layout = QVBoxLayout(playlist_tab)
         
         lbl_info = QLabel("Playlist Queue (Drag & Drop files or load folder)", playlist_tab)
-        lbl_info.setStyleSheet("font-size: 10px; color: var(--text-sec);")
+        lbl_info.setStyleSheet("font-size: 10px; color: #94a3b8;")
         play_tab_layout.addWidget(lbl_info)
         
         self.playlist_list = DragDropListWidget(playlist_tab)
@@ -1098,13 +1159,14 @@ class BingeBoxPlayer(QMainWindow):
             band_box = QVBoxLayout()
             slider = QSlider(Qt.Orientation.Vertical)
             slider.setRange(-20, 20)
-            slider.setValue(0)
+            initial_val = int(self.eq_bands[i]) if hasattr(self, 'eq_bands') and len(self.eq_bands) > i else 0
+            slider.setValue(initial_val)
             slider.setFixedHeight(100)
             slider.valueChanged.connect(lambda val, idx=i: self.equalizer_band_changed(idx, val))
             
             lbl = QLabel(bands_frequencies[i])
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("font-size: 7px; color: var(--text-sec);")
+            lbl.setStyleSheet("font-size: 7px; color: #94a3b8;")
             
             band_box.addWidget(slider, 1)
             band_box.addWidget(lbl)
@@ -1140,13 +1202,14 @@ class BingeBoxPlayer(QMainWindow):
         # Pre-amp booster
         preamp_row = QHBoxLayout()
         preamp_row.addWidget(QLabel("Pre-amp Volume Boost:"))
-        self.preamp_val_lbl = QLabel("0 dB")
+        pre_init = int(getattr(self, 'preamp', 0.0))
+        self.preamp_val_lbl = QLabel(f"{pre_init} dB")
         preamp_row.addWidget(self.preamp_val_lbl, 0, Qt.AlignmentFlag.AlignRight)
         fx_layout.addLayout(preamp_row)
         
         self.preamp_slider = QSlider(Qt.Orientation.Horizontal)
         self.preamp_slider.setRange(-20, 20)
-        self.preamp_slider.setValue(0)
+        self.preamp_slider.setValue(pre_init)
         self.preamp_slider.valueChanged.connect(self.preamp_changed)
         fx_layout.addWidget(self.preamp_slider)
         
@@ -1381,7 +1444,7 @@ class BingeBoxPlayer(QMainWindow):
         ext_sub_layout.addWidget(self.load_sub_btn)
         
         self.sub_file_lbl = QLabel("No subtitle file loaded")
-        self.sub_file_lbl.setStyleSheet("font-size: 10px; color: var(--text-sec);")
+        self.sub_file_lbl.setStyleSheet("font-size: 10px; color: #94a3b8;")
         ext_sub_layout.addWidget(self.sub_file_lbl)
         sub_layout.addWidget(ext_sub_group)
         
@@ -1468,7 +1531,7 @@ class BingeBoxPlayer(QMainWindow):
         lib_layout.addLayout(lib_actions)
         
         self.lib_path_lbl = QLabel("No active folder scanned")
-        self.lib_path_lbl.setStyleSheet("font-size: 10px; color: var(--text-sec);")
+        self.lib_path_lbl.setStyleSheet("font-size: 10px; color: #94a3b8;")
         self.lib_path_lbl.setWordWrap(True)
         lib_layout.addWidget(self.lib_path_lbl)
         
@@ -1488,12 +1551,12 @@ class BingeBoxPlayer(QMainWindow):
         about_group = QGroupBox("About BingeBox")
         about_g_layout = QVBoxLayout(about_group)
         
-        app_title_lbl = QLabel("🎬 BingeBox Media Player v1.0.0")
+        app_title_lbl = QLabel("🎬 BingeBox Media Player v1.1.0")
         app_title_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
         about_g_layout.addWidget(app_title_lbl)
         
         app_desc_lbl = QLabel("100% Standalone, 100% Offline & Private Media Player.\nPowered by libmpv, PySide6, and FFmpeg.\nDeveloped with ❤️ by CAPTAIN NEMO.")
-        app_desc_lbl.setStyleSheet("color: var(--text-sec); font-size: 11px;")
+        app_desc_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
         app_desc_lbl.setWordWrap(True)
         about_g_layout.addWidget(app_desc_lbl)
         about_layout.addWidget(about_group)
@@ -1584,20 +1647,22 @@ class BingeBoxPlayer(QMainWindow):
         self.update_video_geometry()
 
     def update_video_geometry(self):
-        # Apply Zoom & Pan absolute geometry positioning
+        # Apply Native GPU Zoom & Pan positioning via libmpv
         cw = self.video_container.width()
         ch = self.video_container.height()
         
         if cw <= 0 or ch <= 0:
             return
             
-        new_w = int(cw * self.zoom_level)
-        new_h = int(ch * self.zoom_level)
-        
-        pos_x = int((cw - new_w) / 2) + self.pan_x
-        pos_y = int((ch - new_h) / 2) + self.pan_y
-        
-        self.video_frame.setGeometry(pos_x, pos_y, new_w, new_h)
+        self.video_frame.setGeometry(0, 0, cw, ch)
+        if self.mpv_player:
+            try:
+                zoom_val = math.log2(max(0.01, self.zoom_level))
+                self.mpv_player['video-zoom'] = zoom_val
+                self.mpv_player['video-pan-x'] = self.pan_x / float(max(1, cw))
+                self.mpv_player['video-pan-y'] = self.pan_y / float(max(1, ch))
+            except Exception as e:
+                logging.debug(f"Video geometry update note: {e}")
 
     # ==========================================================================
     # THEME SWITCHER
@@ -1761,10 +1826,8 @@ class BingeBoxPlayer(QMainWindow):
         
         if input_ext == ".mp4":
             output_ext = ".mkv"
-            mux_format = "mkv"
         else:
             output_ext = ".mp4"
-            mux_format = "mp4"
             
         output_name = f"{base_name}_remuxed{output_ext}"
         output_path = os.path.join(input_dir, output_name)
@@ -1779,22 +1842,40 @@ class BingeBoxPlayer(QMainWindow):
         self.remux_status_lbl.setText(f"⚡ Remuxing to {os.path.basename(output_path)}...")
         self.remux_btn.setEnabled(False)
         
+        # Determine format-specific ffmpeg lossless remux arguments
+        if output_ext == ".mkv":
+            args = ["-nostdin", "-loglevel", "error", "-y", "-i", input_path, "-map", "0", "-c", "copy", output_path]
+        else:
+            args = ["-nostdin", "-loglevel", "error", "-y", "-i", input_path, "-map", "0", "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text", output_path]
+            
         # Run QProcess in background
         self.remux_process = QProcess(self)
+        self.remux_process.errorOccurred.connect(lambda err, op=output_path: self.remux_error(err, op))
         self.remux_process.finished.connect(lambda exit_code, exit_status, op=output_path: self.remux_finished(exit_code, exit_status, op))
-        
-        # Remux instantaneously using bundled FFmpeg engine (lossless stream copy)
-        args = ["-y", "-i", input_path, "-c", "copy", output_path]
         self.remux_process.start(FFMPEG_BIN, args)
+
+    def remux_error(self, error, output_path):
+        self.remux_btn.setEnabled(True)
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except Exception:
+                pass
+        self.remux_status_lbl.setText("❌ Remux process error occurred!")
+        QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
 
     def remux_finished(self, exit_code, exit_status, output_path):
         self.remux_btn.setEnabled(True)
         if exit_code == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             filename = os.path.basename(output_path)
             self.remux_status_lbl.setText(f"✅ Saved as {filename}!")
-            # Add file to playlist and select it
             self.add_local_file(output_path)
         else:
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
             self.remux_status_lbl.setText("❌ Remux failed or was aborted!")
             
         QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
@@ -1850,15 +1931,15 @@ class BingeBoxPlayer(QMainWindow):
             try:
                 self.mpv_player.play(path)
                 self.mpv_player.pause = False
-                self.mpv_player.mute = False
-                vol_val = self.volume_slider.value() if hasattr(self, 'volume_slider') else 80
+                self.mpv_player.mute = getattr(self, 'is_muted', False)
+                vol_val = self.volume_slider.value() if hasattr(self, 'volume_slider') else getattr(self, 'volume', 80)
                 self.mpv_player.volume = vol_val
                 self.mpv_player.aid = "auto"
                 # Apply current rotation and mirror
                 self.mpv_player.video_rotate = self.rotation_angle
                 self.mpv_player.vf = "hflip" if self.mirror_enabled else ""
             except Exception as e:
-                print("Failed to play video via mpv:", e)
+                logging.error(f"Failed to play video via mpv: {e}")
                 self._is_loading = False
                 return False
         
@@ -1886,7 +1967,7 @@ class BingeBoxPlayer(QMainWindow):
         
         # Apply current video filters adjustments
         if hasattr(self, "brightness_slider"):
-            self.update_vlc_adjust_filter()
+            self.update_video_adjust_filter()
         
         # Reset subtitle delay display & external file label
         if hasattr(self, "sub_delay_lbl"):
@@ -2110,28 +2191,33 @@ class BingeBoxPlayer(QMainWindow):
     # ==========================================================================
 
     def toggle_mute(self):
+        self.is_muted = not getattr(self, 'is_muted', False)
         if self.mpv_player:
-            is_muted = getattr(self.mpv_player, 'mute', False)
-            self.mpv_player.mute = not is_muted
-            self.mute_btn.setText("🔇" if not is_muted else "🔊")
+            self.mpv_player.mute = self.is_muted
+        vol = getattr(self, 'volume', 80)
+        self.mute_btn.setText("🔇" if self.is_muted else ("🔈" if vol < 50 else ("🔉" if vol < 100 else "🔊")))
+        self.save_settings()
 
     def volume_changed(self, value):
+        self.volume = value
         if self.mpv_player:
             self.mpv_player.volume = value
-            if value == 0:
-                self.mute_btn.setText("🔇")
-            elif value < 50:
-                self.mute_btn.setText("🔈")
-            elif value < 100:
-                self.mute_btn.setText("🔉")
-            else:
-                self.mute_btn.setText("🔊")
+        if getattr(self, 'is_muted', False):
+            self.mute_btn.setText("🔇")
+        elif value == 0:
+            self.mute_btn.setText("🔇")
+        elif value < 50:
+            self.mute_btn.setText("🔈")
+        elif value < 100:
+            self.mute_btn.setText("🔉")
         else:
             self.mute_btn.setText("🔊")
+        self.save_settings()
 
     def preamp_changed(self, value):
         self.preamp = float(value)
         self.preamp_val_lbl.setText(f"{value} dB")
+        self.save_settings()
         self.apply_equalizer_settings()
 
     def audio_delay_changed(self, value):
@@ -2160,10 +2246,11 @@ class BingeBoxPlayer(QMainWindow):
         try:
             filters = []
             
-            # 1. 10-Band Graphic Equalizer
-            if any(b != 0 for b in self.eq_bands):
-                g_parts = [f"g{i}={self.eq_bands[i]:.1f}" for i in range(min(10, len(self.eq_bands)))]
-                filters.append("equalizer=" + ":".join(g_parts))
+            # 1. 10-Band Parametric Equalizer via FFmpeg libavfilter
+            freqs = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+            bands = [f"equalizer=f={f}:t=o:w=1:g={g:.1f}" for f, g in zip(freqs, self.eq_bands) if g != 0]
+            if bands:
+                filters.append("lavfi=[" + ",".join(bands) + "]")
                 
             # 2. Pre-amp Volume Gain
             if hasattr(self, 'preamp') and self.preamp != 0:
@@ -2179,10 +2266,11 @@ class BingeBoxPlayer(QMainWindow):
                 
             self.mpv_player['af'] = ",".join(filters) if filters else ""
         except Exception as e:
-            print("Audio filters update error:", e)
+            logging.error(f"Audio filters update error: {e}")
 
     def equalizer_band_changed(self, index, value):
         self.eq_bands[index] = float(value)
+        self.save_settings()
         self.apply_equalizer_settings()
 
     def apply_eq_preset(self, index):
@@ -2198,6 +2286,7 @@ class BingeBoxPlayer(QMainWindow):
         for i in range(10):
             self.eq_sliders[i].setValue(int(gains[i]))
             self.eq_bands[i] = gains[i]
+        self.save_settings()
         self.apply_equalizer_settings()
 
     def reset_audio_panel(self):
@@ -2256,13 +2345,16 @@ class BingeBoxPlayer(QMainWindow):
         self.rot_combo.setCurrentIndex(0)
         self.mirror_btn.setChecked(False)
         
-        # Reset mpv player video rotation and filters
+        # Reset mpv player video rotation, zoom, pan, and filters
         if self.mpv_player:
             try:
+                self.mpv_player['video-zoom'] = 0.0
+                self.mpv_player['video-pan-x'] = 0.0
+                self.mpv_player['video-pan-y'] = 0.0
                 self.mpv_player.video_rotate = 0
                 self.mpv_player.vf = ""
             except Exception as e:
-                print("Failed to reset mpv video geometry:", e)
+                logging.warning(f"Failed to reset mpv video geometry: {e}")
         
         self.update_video_geometry()
 
@@ -2357,10 +2449,18 @@ class BingeBoxPlayer(QMainWindow):
 
     def slider_released(self):
         self._slider_active = False
-        if self._pending_seek_sec is not None:
-            if hasattr(self, '_seek_timer'):
-                self._seek_timer.stop()
-            self._do_debounced_seek()
+        if hasattr(self, '_seek_timer'):
+            self._seek_timer.stop()
+        if self.mpv_player and self.slider.maximum() > 0:
+            target_sec = self.slider.value() / 1000.0
+            try:
+                self.mpv_player.seek(target_sec, 'absolute+exact')
+            except Exception:
+                try:
+                    self.mpv_player.time_pos = target_sec
+                except Exception:
+                    pass
+        self._pending_seek_sec = None
 
     def update_playback_progress(self):
         if getattr(self, '_is_loading', False):
@@ -2480,9 +2580,7 @@ class BingeBoxPlayer(QMainWindow):
         self.update_shortcuts_ui()
 
     def reset_hotkeys(self):
-        self.hotkeys = {}
-        for k, v in DEFAULT_HOTKEYS.items():
-            self.hotkeys[k] = v.copy()
+        self.hotkeys = copy.deepcopy(DEFAULT_HOTKEYS)
         self.save_settings()
         self.update_shortcuts_ui()
 
@@ -2521,9 +2619,11 @@ class BingeBoxPlayer(QMainWindow):
                 self.handle_rebinding_key(event)
                 return True # Consume it so the focused widget doesn't process it!
                 
-            # If the focused widget is a text input, bypass shortcuts to allow typing
+            # If the focused widget is a text input, combo box, or popup view, bypass shortcuts
             focused = QApplication.focusWidget()
-            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QAbstractItemView)):
+                return False
+            if isinstance(obj, (QComboBox, QAbstractItemView, QMenu)):
                 return False
                 
             key = event.key()
@@ -2573,6 +2673,49 @@ class BingeBoxPlayer(QMainWindow):
             self.handle_rebinding_key(event)
             return
         super().keyPressEvent(event)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.handle_dropped_urls(event.mimeData().urls())
+        else:
+            event.ignore()
+
+    def handle_dropped_urls(self, urls):
+        collected_files = []
+        for url in urls:
+            fp = url.toLocalFile() if hasattr(url, "toLocalFile") else str(url)
+            if os.path.exists(fp):
+                if os.path.isdir(fp):
+                    for root, _, files in os.walk(fp):
+                        for f in sorted(files):
+                            if f.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
+                                collected_files.append(os.path.join(root, f))
+                elif fp.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
+                    collected_files.append(fp)
+        if collected_files:
+            had_files = len(self.playlist) > 0
+            first_new_path = collected_files[0]
+            self.add_local_files(collected_files)
+            if not had_files and len(self.playlist) > 0:
+                self.load_video(0)
+                self.play_video()
+            elif first_new_path in self.playlist:
+                idx = self.playlist.index(first_new_path)
+                self.load_video(idx)
+                self.play_video()
 
     def trigger_shortcut_action(self, action):
         if action == "play_pause":
@@ -2673,7 +2816,7 @@ class BingeBoxPlayer(QMainWindow):
     # VIDEO ADJUSTMENT FILTERS
     # ==========================================================================
 
-    def update_vlc_adjust_filter(self):
+    def update_video_adjust_filter(self):
         if self.mpv_player:
             try:
                 b_val = (self.brightness_slider.value() - 10) * 5
@@ -2685,26 +2828,28 @@ class BingeBoxPlayer(QMainWindow):
                 self.mpv_player.saturation = int(s_val)
                 self.mpv_player.hue = int(h_val)
             except Exception as e:
-                print("Filter adjustment note:", e)
+                logging.debug(f"Filter adjustment note: {e}")
+                
+    update_vlc_adjust_filter = update_video_adjust_filter
         
     def brightness_changed(self, value):
         val = value / 10.0
         self.brightness_val_lbl.setText(f"{val:.1f}")
-        self.update_vlc_adjust_filter()
+        self.update_video_adjust_filter()
         
     def contrast_changed(self, value):
         val = value / 10.0
         self.contrast_val_lbl.setText(f"{val:.1f}")
-        self.update_vlc_adjust_filter()
+        self.update_video_adjust_filter()
         
     def saturation_changed(self, value):
         val = value / 10.0
         self.saturation_val_lbl.setText(f"{val:.1f}")
-        self.update_vlc_adjust_filter()
+        self.update_video_adjust_filter()
         
     def hue_changed(self, value):
         self.hue_val_lbl.setText(f"{value}°")
-        self.update_vlc_adjust_filter()
+        self.update_video_adjust_filter()
         
     def reset_video_filters(self):
         self.brightness_slider.setValue(10)
@@ -2974,6 +3119,8 @@ class BingeBoxPlayer(QMainWindow):
 # MAIN EXECUTION ENTRY POINT
 # ==========================================================================
 
+IPC_SERVER_NAME = "BingeBox_SingleInstance_IPC_v1"
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
@@ -2981,7 +3128,66 @@ if __name__ == "__main__":
     app.setFont(QFont("Segoe UI", 9))
     
     # Check for file path passed via command line or file association ("Open With")
-    initial_file = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
+    initial_file = None
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+        raw_arg = sys.argv[1]
+        initial_file = os.path.abspath(raw_arg) if not raw_arg.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")) else raw_arg
+        
+    # Check if an instance is already running via QLocalSocket
+    client_socket = QLocalSocket()
+    client_socket.connectToServer(IPC_SERVER_NAME)
+    if client_socket.waitForConnected(500):
+        # Existing instance found! Send target file path to it and exit.
+        if initial_file:
+            client_socket.write(initial_file.encode("utf-8"))
+            client_socket.flush()
+            client_socket.waitForBytesWritten(1000)
+        client_socket.disconnectFromServer()
+        sys.exit(0)
+        
+    # Primary instance: setup local IPC server
     player = BingeBoxPlayer(initial_file=initial_file)
+    
+    server = QLocalServer()
+    # Clean up stale socket file if left over from a prior hard termination
+    QLocalServer.removeServer(IPC_SERVER_NAME)
+    
+    def on_new_ipc_connection():
+        conn = server.nextPendingConnection()
+        if not conn:
+            return
+        def on_ready_read():
+            data = conn.readAll().data().decode("utf-8", errors="ignore").strip()
+            if data:
+                is_net = data.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://"))
+                if is_net or os.path.exists(data):
+                    player.add_local_file(data)
+                    if data in player.playlist:
+                        idx = player.playlist.index(data)
+                        player.load_video(idx)
+                        player.play_video()
+            # Bring player window to front
+            player.setWindowState(player.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
+            player.show()
+            player.raise_()
+            player.activateWindow()
+            conn.disconnectFromServer()
+            
+        conn.readyRead.connect(on_ready_read)
+        
+    server.newConnection.connect(on_new_ipc_connection)
+    server.listen(IPC_SERVER_NAME)
+    
+    # Clean up server on close
+    orig_close_event = player.closeEvent
+    def wrapped_close_event(event):
+        try:
+            server.close()
+            QLocalServer.removeServer(IPC_SERVER_NAME)
+        except Exception:
+            pass
+        orig_close_event(event)
+    player.closeEvent = wrapped_close_event
+    
     player.show()
     sys.exit(app.exec())

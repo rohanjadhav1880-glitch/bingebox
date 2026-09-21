@@ -46,61 +46,88 @@ Download the latest pre-compiled packages directly from our [GitHub Releases](ht
 
 ---
 
-## 🛠️ Building from Source
+## 📂 Repository Structure
 
-### 💻 Windows Desktop
-
-#### Prerequisites
-- Python 3.10+
-- Windows 10 / 11
-
-#### Build Steps
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/rohanjadhav1880-glitch/bingebox.git
-   cd bingebox
-   ```
-
-2. **Install Python Dependencies**:
-   ```bash
-   pip install PySide6 python-mpv
-   ```
-
-3. **Run Application**:
-   ```bash
-   python main.py
-   ```
-
-4. **Build Standalone Executable (`BingeBox.exe`)**:
-   ```bash
-   python -m PyInstaller main.spec --noconfirm
-   ```
-
-5. **Build Windows Installer (`BingeBox_Setup.exe`)**:
-   *(Requires Inno Setup 6)*
-   ```bash
-   & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup_installer.iss
-   ```
+- `main.py`: Core desktop player application (Python 3.10 & PySide6 / Qt6).
+- `setup_engine.py`: Engine helper utility to check and guide `libmpv` & FFmpeg installation.
+- `main.spec` & `setup_installer.iss`: PyInstaller executable spec and Inno Setup Windows installer script.
+- `android/`: Native Android application (Kotlin, Jetpack Compose, Android NDK `libmpv`).
+- `web/`: Web and Electron client (HTML5, Vite, Canvas dynamic lighting).
 
 ---
 
-### 📱 Android Application
+## 🛠️ Building from Source
+
+### 💻 Windows Desktop (Python / PySide6)
 
 #### Prerequisites
-- Android Studio / Android SDK (API 34, Build-Tools 34.0.0)
-- JDK 17+
+- Python 3.10+
+- Windows 10 / 11 (64-bit)
 
-#### Build Steps
-1. Navigate to the `android/` directory:
+#### 1. Clone the Repository
+```bash
+git clone https://github.com/rohanjadhav1880-glitch/bingebox.git
+cd bingebox
+```
+
+#### 2. Install Python Dependencies
+```bash
+pip install PySide6 python-mpv
+```
+
+#### 3. Setup libmpv & Engine Binaries
+`python-mpv` requires the 64-bit `libmpv` shared library on Windows:
+1. Download 64-bit `libmpv` (`libmpv-2.dll` or `mpv-1.dll`) from [SourceForge mpv-player-windows](https://sourceforge.net/projects/mpv-player-windows/files/libmpv/) or [shinchiro/mpv-winbuild-cmake Releases](https://github.com/shinchiro/mpv-winbuild-cmake/releases).
+2. Extract `libmpv-2.dll` (or `mpv-1.dll`) into the `engine/` folder in the project root:
+   ```text
+   bingebox/
+   ├── engine/
+   │   ├── libmpv-2.dll
+   │   ├── ffmpeg.exe (optional, for thumbnail extraction)
+   │   └── ffprobe.exe (optional)
+   ├── main.py
+   ```
+3. Run the engine verification script:
    ```bash
-   cd android
+   python setup_engine.py
    ```
 
-2. Compile Debug APK:
-   ```bash
-   ./gradlew.bat assembleDebug
-   ```
-   The compiled APK will be at `android/app/build/outputs/apk/debug/app-debug.apk`.
+#### 4. Run Application
+```bash
+python main.py
+```
+
+#### 5. Build Standalone Executable & Installer
+```bash
+# Build portable standalone .exe
+python -m PyInstaller main.spec --noconfirm
+
+# Build Inno Setup single-file installer (requires Inno Setup 6)
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup_installer.iss
+```
+
+---
+
+### 📱 Android Application (Kotlin / Compose)
+
+See the [Android Documentation](android/README_ANDROID.md) for full setup instructions.
+
+```bash
+cd android
+./gradlew.bat assembleDebug
+```
+The output APK will be generated at `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+---
+
+### 🌐 Web / Electron Client (Optional)
+
+See the [Web Documentation](web/README.md) for setup and development:
+```bash
+cd web
+npm install
+npm run dev
+```
 
 ---
 

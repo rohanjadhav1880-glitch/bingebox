@@ -56,7 +56,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
-    QDialogButtonBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
+    QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
     QSlider, QStyle, QTabWidget, QTextBrowser, QTextEdit, QVBoxLayout,
@@ -638,12 +638,21 @@ class ThumbnailWorker(QRunnable):
         try:
             thumb_path = get_video_thumbnail_static(self.video_path)
             if thumb_path:
-                self.signals.finished.emit(self.video_path, thumb_path)
+                try:
+                    self.signals.finished.emit(self.video_path, thumb_path)
+                except Exception:
+                    pass
             else:
-                self.signals.failed.emit(self.video_path)
+                try:
+                    self.signals.failed.emit(self.video_path)
+                except Exception:
+                    pass
         except Exception as e:
             logging.warning(f"Error in thumbnail worker for {self.video_path}: {e}")
-            self.signals.failed.emit(self.video_path)
+            try:
+                self.signals.failed.emit(self.video_path)
+            except Exception:
+                pass
 
 
 # ==========================================================================

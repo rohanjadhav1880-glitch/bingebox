@@ -431,6 +431,7 @@ class ABLoopSlider(QSlider):
 
 class DragDropListWidget(QListWidget):
     file_dropped = Signal(str)
+    files_dropped = Signal(list)
     order_changed = Signal()
 
     def __init__(self, parent=None):
@@ -457,23 +458,24 @@ class DragDropListWidget(QListWidget):
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
+            collected_files = []
+            video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts', '.mp3', '.wav', '.flac')
             for url in event.mimeData().urls():
                 file_path = url.toLocalFile()
                 if os.path.exists(file_path):
                     if os.path.isdir(file_path):
                         # Scan folder recursively for media files
-                        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts', '.mp3', '.wav', '.flac')
                         try:
                             for root, dirs, files in os.walk(file_path):
                                 for f in sorted(files):
                                     if f.lower().endswith(video_extensions):
-                                        self.file_dropped.emit(os.path.join(root, f))
+                                        collected_files.append(os.path.join(root, f))
                         except Exception as e:
                             print("Failed to scan dropped folder:", e)
-                    elif file_path.lower().endswith(
-                        ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts', '.mp3', '.wav', '.flac')
-                    ):
-                        self.file_dropped.emit(file_path)
+                    elif file_path.lower().endswith(video_extensions):
+                        collected_files.append(file_path)
+            if collected_files:
+                self.files_dropped.emit(collected_files)
         else:
             super().dropEvent(event)
             self.order_changed.emit()
@@ -493,19 +495,33 @@ def get_resource_path(relative_path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
+def get_app_data_dir():
+    app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
+    if not app_data:
+        app_data = os.path.expanduser("~/.bingebox")
+    os.makedirs(app_data, exist_ok=True)
+    return app_data
+
+
+def get_settings_file_path():
+    return os.path.join(get_app_data_dir(), "bingebox_settings.json")
+
+
+def get_thumbnails_cache_dir():
+    cache_dir = os.path.join(get_app_data_dir(), "thumbnails")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+
 def get_video_thumbnail_static(video_path):
-    if getattr(sys, 'frozen', False):
-        app_dir = os.path.dirname(sys.executable)
-    else:
-        app_dir = os.path.dirname(os.path.abspath(__file__))
+    if not video_path:
+        return None
         
-    cache_dir = os.path.join(app_dir, ".thumbnails")
-    if not os.path.exists(cache_dir):
-        try:
-            os.makedirs(cache_dir)
-        except Exception:
-            pass
-            
+    # Skip ffmpeg subprocess extraction for network streams
+    if video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+        return None
+        
+    cache_dir = get_thumbnails_cache_dir()
     import hashlib
     path_hash = hashlib.md5(video_path.encode('utf-8')).hexdigest()
     thumb_path = os.path.join(cache_dir, f"{path_hash}.png")
@@ -518,6 +534,12 @@ def get_video_thumbnail_static(video_path):
         creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         cmd = [FFMPEG_BIN, "-y", "-ss", "00:00:02", "-i", video_path, "-vframes", "1", "-vf", "scale=160:90", thumb_path]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags, timeout=5)
+        if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+            return thumb_path
+            
+        # Retry at 0s if 2s seek failed (e.g. short clips)
+        cmd = [FFMPEG_BIN, "-y", "-ss", "00:00:00", "-i", video_path, "-vframes", "1", "-vf", "scale=160:90", thumb_path]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags, timeout=3)
         if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
             return thumb_path
     except Exception as e:
@@ -561,8 +583,10 @@ DEFAULT_HOTKEYS = {
 }
 
 class BingeBoxPlayer(QMainWindow):
-    def __init__(self):
+    def __init__(self, initial_file=None):
         super().__init__()
+        self.initial_file = initial_file
+        self._active_workers = set()
         
         # State settings
         self.playlist = []
@@ -586,9 +610,18 @@ class BingeBoxPlayer(QMainWindow):
         self.controls_hide_timer.setSingleShot(True)
         self.controls_hide_timer.timeout.connect(self.hide_controls_in_fullscreen)
         
+        # Debounce timer for seekbar scrubbing to prevent libmpv freezes
+        self._seek_timer = QTimer(self)
+        self._seek_timer.setSingleShot(True)
+        self._seek_timer.setInterval(50)
+        self._seek_timer.timeout.connect(self._do_debounced_seek)
+        self._pending_seek_sec = None
+        self._slider_active = False
+        
         self.ab_start = None
         self.ab_end = None
         self.ab_active = False
+        self.remux_process = None
         
         # Video transform states
         self.zoom_level = 1.0
@@ -597,9 +630,13 @@ class BingeBoxPlayer(QMainWindow):
         self.rotation_angle = 0
         self.mirror_enabled = False
         
-        # Audio enhancer states
-        self.night_mode = False
-        self.normalizer = False
+        # Playback safety and cycle detection states
+        self._is_loading = False
+        self._playback_started = False
+        self._consecutive_failures = 0
+        self._load_pending_ticks = 0
+        
+        # Audio enhancer states (10-Band Graphic Equalizer, Pre-amp, Normalizer, Night Mode)
         self.audio_delay = 0.0 # seconds
         self.eq_bands = [0.0] * 10
         self.preamp = 0.0
@@ -623,8 +660,6 @@ class BingeBoxPlayer(QMainWindow):
         
         # Initialize mpv Engine
         self.mpv_player = None
-        self.eq_bands = [0, 0, 0, 0, 0]
-        self.preamp = 0
         
         # Build layout UI
         self.init_ui()
@@ -637,7 +672,13 @@ class BingeBoxPlayer(QMainWindow):
         if getattr(self, "scanned_folder", ""):
             self.rescan_library()
             
-        if self.playlist:
+        if self.initial_file:
+            self.add_local_file(self.initial_file)
+            if self.initial_file in self.playlist:
+                idx = self.playlist.index(self.initial_file)
+                self.load_video(idx)
+                self.play_video()
+        elif self.playlist:
             self.load_video(0)
             
         # Draw dynamic shortcuts list
@@ -652,14 +693,21 @@ class BingeBoxPlayer(QMainWindow):
         QCoreApplication.instance().installEventFilter(self)
 
     def load_settings(self):
-        # Read from local folder
         try:
-            settings_file = "bingebox_settings.json"
-            if not os.path.exists(settings_file) and os.path.exists("aether_settings.json"):
-                settings_file = "aether_settings.json"
+            settings_file = get_settings_file_path()
+            # Migration check from local legacy folder
+            if not os.path.exists(settings_file):
+                for legacy in ("bingebox_settings.json", "aether_settings.json"):
+                    if os.path.exists(legacy):
+                        try:
+                            import shutil
+                            shutil.copy2(legacy, settings_file)
+                            break
+                        except Exception:
+                            pass
                 
             if os.path.exists(settings_file):
-                with open(settings_file, "r") as f:
+                with open(settings_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.playlist = data.get("playlist", [])
                     self.theme = data.get("theme", "obsidian")
@@ -669,7 +717,11 @@ class BingeBoxPlayer(QMainWindow):
                     self.scanned_folder = data.get("scanned_folder", "")
                     self.bookmarks = data.get("bookmarks", {})
                     self.controls_theme = data.get("controls_theme", "semi_transparent")
-                    
+                    self.preamp = float(data.get("preamp", 0.0))
+                    saved_eq = data.get("eq_bands", [])
+                    if isinstance(saved_eq, list) and len(saved_eq) == 10:
+                        self.eq_bands = [float(x) for x in saved_eq]
+                        
                     # Merge loaded hotkeys to handle backwards compatibility
                     saved_hotkeys = data.get("hotkeys", {})
                     for act, conf in DEFAULT_HOTKEYS.items():
@@ -680,7 +732,8 @@ class BingeBoxPlayer(QMainWindow):
 
     def save_settings(self):
         try:
-            with open("bingebox_settings.json", "w") as f:
+            settings_file = get_settings_file_path()
+            with open(settings_file, "w", encoding="utf-8") as f:
                 json.dump({
                     "playlist": self.playlist,
                     "theme": self.theme,
@@ -690,8 +743,10 @@ class BingeBoxPlayer(QMainWindow):
                     "hotkeys": self.hotkeys,
                     "scanned_folder": getattr(self, "scanned_folder", ""),
                     "bookmarks": getattr(self, "bookmarks", {}),
-                    "controls_theme": getattr(self, "controls_theme", "semi_transparent")
-                }, f)
+                    "controls_theme": getattr(self, "controls_theme", "semi_transparent"),
+                    "preamp": getattr(self, "preamp", 0.0),
+                    "eq_bands": getattr(self, "eq_bands", [0.0] * 10)
+                }, f, indent=2)
         except Exception as e:
             print("Failed to save settings:", e)
 
@@ -699,34 +754,38 @@ class BingeBoxPlayer(QMainWindow):
         # 1. Set default icon first
         item.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
         
-        # 2. Check if already cached on disk
-        if getattr(sys, 'frozen', False):
-            app_dir = os.path.dirname(sys.executable)
-        else:
-            app_dir = os.path.dirname(os.path.abspath(__file__))
+        if not video_path:
+            return
             
-        cache_dir = os.path.join(app_dir, ".thumbnails")
+        # Skip ffmpeg subprocess extraction for network streams
+        if video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+            return
+            
+        # 2. Check if already cached on disk
+        cache_dir = get_thumbnails_cache_dir()
         import hashlib
         path_hash = hashlib.md5(video_path.encode('utf-8')).hexdigest()
         thumb_path = os.path.join(cache_dir, f"{path_hash}.png")
         
-        if os.path.exists(thumb_path):
+        if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
             item.setIcon(QIcon(thumb_path))
             return
             
         # 3. If not cached, fetch in background thread
         worker = ThumbnailWorker(video_path)
+        self._active_workers.add(worker)
         
         def on_finished(v_path, t_path):
+            self._active_workers.discard(worker)
             # Update icons for all matching items in playlist
             for i in range(self.playlist_list.count()):
                 li = self.playlist_list.item(i)
-                if li.data(Qt.ItemDataRole.UserRole) == v_path:
+                if li and li.data(Qt.ItemDataRole.UserRole) == v_path:
                     li.setIcon(QIcon(t_path))
             # and in library
             for i in range(self.library_list.count()):
                 li = self.library_list.item(i)
-                if li.data(Qt.ItemDataRole.UserRole) == v_path:
+                if li and li.data(Qt.ItemDataRole.UserRole) == v_path:
                     li.setIcon(QIcon(t_path))
                     
         worker.signals.finished.connect(on_finished)
@@ -791,6 +850,7 @@ class BingeBoxPlayer(QMainWindow):
         # Drag mechanics bindings
         self.titlebar.mousePressEvent = self.titlebar_press
         self.titlebar.mouseMoveEvent = self.titlebar_move
+        self.titlebar.mouseReleaseEvent = self.titlebar_release
         self.titlebar.mouseDoubleClickEvent = self.titlebar_double_click
         
         # 2. Main Area Layout
@@ -825,6 +885,8 @@ class BingeBoxPlayer(QMainWindow):
                 wid=str(int(self.video_frame.winId())),
                 vo="gpu",
                 hwdec="auto-safe",
+                demuxer_max_bytes="150MiB",
+                demuxer_max_back_bytes="50MiB",
                 keep_open=True,
                 volume=80,
                 mute=False
@@ -979,6 +1041,7 @@ class BingeBoxPlayer(QMainWindow):
         self.playlist_list = DragDropListWidget(playlist_tab)
         self.playlist_list.setIconSize(QSize(64, 36))
         self.playlist_list.file_dropped.connect(self.add_local_file)
+        self.playlist_list.files_dropped.connect(self.add_local_files)
         self.playlist_list.itemDoubleClicked.connect(self.playlist_item_clicked)
         self.playlist_list.order_changed.connect(self.playlist_order_changed)
         play_tab_layout.addWidget(self.playlist_list, 1)
@@ -1443,6 +1506,21 @@ class BingeBoxPlayer(QMainWindow):
         support_g_layout.addWidget(self.support_btn)
         
         about_layout.addWidget(support_group)
+
+        licenses_group = QGroupBox("Open Source & Licensing")
+        licenses_g_layout = QVBoxLayout(licenses_group)
+
+        licenses_desc_lbl = QLabel("BingeBox is licensed under the MIT License. It bundles third-party components (libmpv, FFmpeg, MediaInfo, PySide6, shiboken6).")
+        licenses_desc_lbl.setStyleSheet("font-size: 11px;")
+        licenses_desc_lbl.setWordWrap(True)
+        licenses_g_layout.addWidget(licenses_desc_lbl)
+
+        self.licenses_btn = QPushButton("📜 View Third-Party Licenses")
+        self.licenses_btn.setStyleSheet("background-color: #2D3748; color: #FFFFFF; font-weight: bold; border-radius: 6px; padding: 8px;")
+        self.licenses_btn.clicked.connect(self.show_licenses_dialog)
+        licenses_g_layout.addWidget(self.licenses_btn)
+
+        about_layout.addWidget(licenses_group)
         about_layout.addStretch()
         
         self.tabs.addTab(about_tab, "About")
@@ -1469,8 +1547,25 @@ class BingeBoxPlayer(QMainWindow):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint()
 
+    def titlebar_release(self, event):
+        self._drag_pos = None
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
     def titlebar_move(self, event):
         if self._drag_pos is not None:
+            if self.isMaximized():
+                click_x = self._drag_pos.x()
+                ratio = click_x / self.width() if self.width() > 0 else 0.5
+                self.showNormal()
+                new_w = self.width()
+                new_x = int(event.globalPosition().toPoint().x() - (new_w * ratio))
+                new_y = event.globalPosition().toPoint().y() - 10
+                self.move(new_x, new_y)
+                self._drag_pos = event.globalPosition().toPoint()
+                return
             delta = event.globalPosition().toPoint() - self._drag_pos
             self.move(self.x() + delta.x(), self.y() + delta.y())
             self._drag_pos = event.globalPosition().toPoint()
@@ -1565,15 +1660,19 @@ class BingeBoxPlayer(QMainWindow):
             self, "Open Video Files", "",
             "Video files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.mp3 *.wav *.flac);;All files (*.*)"
         )
-        for f in files:
-            self.add_local_file(f)
+        if files:
+            self.add_local_files(files)
 
-    def add_local_file(self, path):
+    def add_local_file(self, path, save=True):
+        if not path:
+            return
         if path not in self.playlist:
             self.playlist.append(path)
-            self.save_settings()
+            if save:
+                self.save_settings()
             
-            filename = os.path.basename(path)
+            is_net = path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://"))
+            filename = path if is_net else os.path.basename(path)
             item = QListWidgetItem(filename)
             item.setData(Qt.ItemDataRole.UserRole, path)
             self.playlist_list.addItem(item)
@@ -1581,6 +1680,26 @@ class BingeBoxPlayer(QMainWindow):
             
             if len(self.playlist) == 1:
                 self.load_video(0)
+
+    def add_local_files(self, paths):
+        if not paths:
+            return
+        added = False
+        first_file = (len(self.playlist) == 0)
+        for path in paths:
+            if path and path not in self.playlist:
+                self.playlist.append(path)
+                is_net = path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://"))
+                filename = path if is_net else os.path.basename(path)
+                item = QListWidgetItem(filename)
+                item.setData(Qt.ItemDataRole.UserRole, path)
+                self.playlist_list.addItem(item)
+                self.request_thumbnail(path, item)
+                added = True
+        if added:
+            self.save_settings()
+        if first_file and len(self.playlist) > 0:
+            self.load_video(0)
 
     def populate_playlist_list(self):
         self.playlist_list.clear()
@@ -1675,12 +1794,23 @@ class BingeBoxPlayer(QMainWindow):
 
     def clear_playlist(self):
         if self.mpv_player:
-            self.mpv_player.stop()
+            try:
+                self.mpv_player.stop()
+            except Exception:
+                pass
         self.playlist = []
         self.playlist_list.clear()
         self.current_index = -1
+        self._playback_started = False
+        self._consecutive_failures = 0
+        self._load_pending_ticks = 0
+        if hasattr(self, 'timer') and self.timer.isActive():
+            self.timer.stop()
+        self.play_btn.setText("▶")
+        self.slider.setValue(0)
+        self.current_time_lbl.setText("00:00")
+        self.total_time_lbl.setText("00:00")
         self.save_settings()
-        self.update_playback_progress()
 
     def playlist_item_clicked(self, item):
         idx = self.playlist_list.row(item)
@@ -1689,27 +1819,25 @@ class BingeBoxPlayer(QMainWindow):
 
     def load_video(self, index):
         if index < 0 or index >= len(self.playlist):
-            return
+            return False
             
+        self._is_loading = True
+        self._playback_started = False
+        self._load_pending_ticks = 0
+        
         self.current_index = index
         self.playlist_list.setCurrentRow(index)
         
         path = self.playlist[index]
         
-        # MPV audio filters applied via apply_equalizer_settings
+        # Verify file existence and non-zero size (bypass for network streams)
+        is_url = path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://"))
+        if not is_url:
+            if not os.path.exists(path) or (os.path.isfile(path) and os.path.getsize(path) == 0):
+                print(f"File not found or empty: {path}")
+                self._is_loading = False
+                return False
             
-        # Transform adjustments (Mirror & Rotation)
-        if self.mirror_enabled or self.rotation_angle != 0:
-            media_opts.append(":video-filter=transform")
-            if self.mirror_enabled:
-                media_opts.append(":transform-type=hflip")
-            elif self.rotation_angle == 90:
-                media_opts.append(":transform-type=90")
-            elif self.rotation_angle == 180:
-                media_opts.append(":transform-type=180")
-            elif self.rotation_angle == 270:
-                media_opts.append(":transform-type=270")
-                
         # Load and play video via mpv engine
         if self.mpv_player:
             try:
@@ -1719,11 +1847,16 @@ class BingeBoxPlayer(QMainWindow):
                 vol_val = self.volume_slider.value() if hasattr(self, 'volume_slider') else 80
                 self.mpv_player.volume = vol_val
                 self.mpv_player.aid = "auto"
+                # Apply current rotation and mirror
+                self.mpv_player.video_rotate = self.rotation_angle
+                self.mpv_player.vf = "hflip" if self.mirror_enabled else ""
             except Exception as e:
                 print("Failed to play video via mpv:", e)
+                self._is_loading = False
+                return False
         
-        # Reset local GUI transformations
-        self.reset_video_geometry()
+        # Apply current video geometry transformations
+        self.update_video_geometry()
         
         # Reset A-B Loop boundaries
         self.ab_start = None
@@ -1755,23 +1888,48 @@ class BingeBoxPlayer(QMainWindow):
         if hasattr(self, "update_bookmarks_ui"):
             self.update_bookmarks_ui()
         
-        # Trigger layout refresh sizes
-        self.update_playback_progress()
+        # Reset progress UI display for newly loaded video without triggering auto-advance
+        self.slider.setValue(0)
+        self.current_time_lbl.setText("00:00")
+        self.total_time_lbl.setText("00:00")
+        
+        # Sync play button state and progress timer
+        self.play_btn.setText("⏸")
+        if hasattr(self, 'timer') and not self.timer.isActive():
+            self.timer.start()
+        
+        self._is_loading = False
+        return True
 
     def play_video(self):
         if self.mpv_player:
             self.mpv_player.pause = False
         self.play_btn.setText("⏸")
-        self.timer.start()
-        QTimer.singleShot(1500, self.capture_mpv_snapshot)
+        if hasattr(self, 'timer') and not self.timer.isActive():
+            self.timer.start()
+            
+        # Only take snapshot if video is local and thumbnail is not already cached
+        if 0 <= self.current_index < len(self.playlist):
+            video_path = self.playlist[self.current_index]
+            if not video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+                import hashlib
+                path_hash = hashlib.md5(video_path.encode('utf-8')).hexdigest()
+                cached_thumb = os.path.join(get_thumbnails_cache_dir(), f"{path_hash}.png")
+                if not os.path.exists(cached_thumb):
+                    QTimer.singleShot(1500, self.capture_mpv_snapshot)
 
     def capture_mpv_snapshot(self, retry_count=0):
         if not self.playlist or self.current_index < 0 or self.current_index >= len(self.playlist):
             return
             
         video_path = self.playlist[self.current_index]
+        if video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+            return
+            
         worker = ThumbnailWorker(video_path)
+        self._active_workers.add(worker)
         def on_finished(v_path, t_path):
+            self._active_workers.discard(worker)
             self.update_ui_thumbnails(v_path, t_path)
         worker.signals.finished.connect(on_finished)
         self.thread_pool.start(worker)
@@ -1818,13 +1976,18 @@ class BingeBoxPlayer(QMainWindow):
         if not self.playlist:
             return
             
-        if is_auto and self.repeat_mode == "one":
-            # Repeat the current video
-            self.load_video(self.current_index)
-            self.play_video()
+        if not is_auto:
+            self._consecutive_failures = 0
+            
+        # Cycle detection: check if consecutive failures reached playlist length
+        if is_auto and getattr(self, '_consecutive_failures', 0) >= len(self.playlist):
+            self._stop_auto_advance_failed()
             return
             
-        if self.shuffle_enabled and len(self.playlist) > 1:
+        if is_auto and self.repeat_mode == "one":
+            # Repeat the current video
+            next_idx = self.current_index
+        elif self.shuffle_enabled and len(self.playlist) > 1:
             import random
             # Select a random index that is not the current one
             next_idx = self.current_index
@@ -1836,17 +1999,58 @@ class BingeBoxPlayer(QMainWindow):
                 if is_auto and self.repeat_mode == "off":
                     # Stop playback at the end of the playlist
                     if self.mpv_player:
-                        self.mpv_player.stop()
+                        try:
+                            self.mpv_player.stop()
+                        except Exception:
+                            pass
                     self.play_btn.setText("▶")
-                    self.timer.stop()
+                    if hasattr(self, 'timer') and self.timer.isActive():
+                        self.timer.stop()
                     self.slider.setValue(0)
                     self.current_time_lbl.setText("00:00")
+                    self.total_time_lbl.setText("00:00")
+                    self._consecutive_failures = 0
+                    self._playback_started = False
                     return
                 else:
                     next_idx = 0
                     
-        self.load_video(next_idx)
+        success = self.load_video(next_idx)
+        if not success:
+            if is_auto:
+                self._consecutive_failures = getattr(self, '_consecutive_failures', 0) + 1
+                if self._consecutive_failures >= len(self.playlist):
+                    self._stop_auto_advance_failed()
+                    return
+                else:
+                    # Asynchronously advance to the next file to avoid recursion / stack overflow
+                    QTimer.singleShot(0, lambda: self.play_next(is_auto=True))
+                    return
+            else:
+                self._consecutive_failures = 0
+                return
+                
         self.play_video()
+
+    def _stop_auto_advance_failed(self):
+        if self.mpv_player:
+            try:
+                self.mpv_player.stop()
+            except Exception:
+                pass
+        self.play_btn.setText("▶")
+        if hasattr(self, 'timer') and self.timer.isActive():
+            self.timer.stop()
+        self.slider.setValue(0)
+        self.current_time_lbl.setText("00:00")
+        self.total_time_lbl.setText("00:00")
+        self._consecutive_failures = 0
+        self._playback_started = False
+        if self.statusBar():
+            self.statusBar().showMessage("Unable to play media: all playlist items failed.", 5000)
+        if hasattr(self, 'remux_status_lbl'):
+            self.remux_status_lbl.setText("❌ All items unplayable or failed")
+            QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
 
     def play_previous(self):
         if not self.playlist:
@@ -1926,39 +2130,43 @@ class BingeBoxPlayer(QMainWindow):
     def normalizer_changed(self, state_val):
         self.normalizer = (state_val == Qt.CheckState.Checked.value)
         self.save_settings()
-        if self.mpv_player:
-            pos_sec = self.mpv_player.time_pos or 0
-            self.load_video(self.current_index)
-            self.mpv_player.time_pos = pos_sec
-            self.play_video()
+        self.apply_equalizer_settings()
 
     def night_mode_changed(self, state_val):
         self.night_mode = (state_val == Qt.CheckState.Checked.value)
         self.save_settings()
-        if self.mpv_player:
-            pos_sec = self.mpv_player.time_pos or 0
-            self.load_video(self.current_index)
-            self.mpv_player.time_pos = pos_sec
-            self.play_video()
+        self.apply_equalizer_settings()
 
     # ==========================================================================
     # NATIVE 10-BAND EQUALIZER HANDLERS
     # ==========================================================================
 
     def apply_equalizer_settings(self):
-        if self.mpv_player:
-            try:
-                if all(b == 0 for b in self.eq_bands):
-                    self.mpv_player['af'] = ""
-                else:
-                    g0 = self.eq_bands[0] if len(self.eq_bands) > 0 else 0
-                    g1 = self.eq_bands[1] if len(self.eq_bands) > 1 else 0
-                    g2 = self.eq_bands[2] if len(self.eq_bands) > 2 else 0
-                    g3 = self.eq_bands[3] if len(self.eq_bands) > 3 else 0
-                    g4 = self.eq_bands[4] if len(self.eq_bands) > 4 else 0
-                    self.mpv_player['af'] = f"equalizer=g0={g0}:g1={g1}:g2={g2}:g3={g3}:g4={g4}"
-            except Exception as e:
-                print("Equalizer update note:", e)
+        if not self.mpv_player:
+            return
+        try:
+            filters = []
+            
+            # 1. 10-Band Graphic Equalizer
+            if any(b != 0 for b in self.eq_bands):
+                g_parts = [f"g{i}={self.eq_bands[i]:.1f}" for i in range(min(10, len(self.eq_bands)))]
+                filters.append("equalizer=" + ":".join(g_parts))
+                
+            # 2. Pre-amp Volume Gain
+            if hasattr(self, 'preamp') and self.preamp != 0:
+                filters.append(f"volume=volume={self.preamp:.1f}dB")
+                
+            # 3. Auto Volume Normalizer (AGC)
+            if getattr(self, 'normalizer', False):
+                filters.append("lavfi=[dynaudnorm=f=75:g=15:p=0.95]")
+                
+            # 4. Movie Night Mode (Dialogue Boost & Dynamics Compression)
+            if getattr(self, 'night_mode', False):
+                filters.append("lavfi=[acompressor=threshold=-30dB:ratio=6:attack=5:release=100]")
+                
+            self.mpv_player['af'] = ",".join(filters) if filters else ""
+        except Exception as e:
+            print("Audio filters update error:", e)
 
     def equalizer_band_changed(self, index, value):
         self.eq_bands[index] = float(value)
@@ -2028,12 +2236,20 @@ class BingeBoxPlayer(QMainWindow):
         self.rotation_angle = 0
         self.mirror_enabled = False
         
-        # Reset sliders
+        # Reset sliders and controls
         self.zoom_slider.setValue(10)
         self.pan_x_slider.setValue(0)
         self.pan_y_slider.setValue(0)
         self.rot_combo.setCurrentIndex(0)
         self.mirror_btn.setChecked(False)
+        
+        # Reset mpv player video rotation and filters
+        if self.mpv_player:
+            try:
+                self.mpv_player.video_rotate = 0
+                self.mpv_player.vf = ""
+            except Exception as e:
+                print("Failed to reset mpv video geometry:", e)
         
         self.update_video_geometry()
 
@@ -2092,26 +2308,75 @@ class BingeBoxPlayer(QMainWindow):
     # ==========================================================================
 
     def slider_moved(self, position):
-        if self.mpv_player:
-            self.mpv_player.time_pos = position / 1000.0
+        self._pending_seek_sec = position / 1000.0
+        cur_secs = int(position / 1000)
+        tot_secs = int(self.slider.maximum() / 1000) if self.slider.maximum() > 0 else 0
+        if tot_secs >= 3600:
+            self.current_time_lbl.setText(f"{cur_secs // 3600:02d}:{(cur_secs % 3600) // 60:02d}:{cur_secs % 60:02d}")
+        else:
+            self.current_time_lbl.setText(f"{cur_secs // 60:02d}:{cur_secs % 60:02d}")
+        if hasattr(self, '_seek_timer') and not self._seek_timer.isActive():
+            self._seek_timer.start()
+
+    def _do_debounced_seek(self):
+        if self.mpv_player and self._pending_seek_sec is not None:
+            try:
+                self.mpv_player.seek(self._pending_seek_sec, 'absolute+keyframes')
+            except Exception:
+                try:
+                    self.mpv_player.time_pos = self._pending_seek_sec
+                except Exception:
+                    pass
+            self._pending_seek_sec = None
 
     def slider_pressed(self):
         self._slider_active = True
 
     def slider_released(self):
         self._slider_active = False
+        if self._pending_seek_sec is not None:
+            if hasattr(self, '_seek_timer'):
+                self._seek_timer.stop()
+            self._do_debounced_seek()
 
     def update_playback_progress(self):
-        if not self.mpv_player:
+        if getattr(self, '_is_loading', False):
             return
             
-        if getattr(self.mpv_player, 'eof_reached', False) or getattr(self.mpv_player, 'idle_active', False):
-            self.play_next(is_auto=True)
+        if not self.mpv_player:
             return
             
         length = int((self.mpv_player.duration or 0) * 1000)
         time = int((self.mpv_player.time_pos or 0) * 1000)
+        idle = getattr(self.mpv_player, 'idle_active', False)
+        eof = getattr(self.mpv_player, 'eof_reached', False)
         
+        # Track when playback has genuinely started with active duration
+        if length > 0 and not idle:
+            self._playback_started = True
+            self._consecutive_failures = 0
+            self._load_pending_ticks = 0
+            
+        # Only advance if playback was genuinely active and duration > 0, or rely on eof_reached
+        if getattr(self, '_playback_started', False) and (eof or (idle and length > 0)):
+            self._playback_started = False
+            self.play_next(is_auto=True)
+            return
+            
+        # Failure timeout: mpv remained in idle state after play was requested
+        if not getattr(self, '_playback_started', False):
+            if idle:
+                self._load_pending_ticks = getattr(self, '_load_pending_ticks', 0) + 1
+                if self._load_pending_ticks > 15: # ~3 seconds stuck in idle without starting
+                    self._load_pending_ticks = 0
+                    self._consecutive_failures = getattr(self, '_consecutive_failures', 0) + 1
+                    if self._consecutive_failures >= len(self.playlist):
+                        self._stop_auto_advance_failed()
+                    else:
+                        self.play_next(is_auto=True)
+                    return
+            return
+            
         if length > 0:
             self.slider.setMaximum(length)
             if not getattr(self, "_slider_active", False):
@@ -2120,8 +2385,12 @@ class BingeBoxPlayer(QMainWindow):
             cur_secs = int(time / 1000)
             tot_secs = int(length / 1000)
             
-            cur_str = f"{cur_secs // 60:02d}:{cur_secs % 60:02d}"
-            tot_str = f"{tot_secs // 60:02d}:{tot_secs % 60:02d}"
+            if tot_secs >= 3600:
+                cur_str = f"{cur_secs // 3600:02d}:{(cur_secs % 3600) // 60:02d}:{cur_secs % 60:02d}"
+                tot_str = f"{tot_secs // 3600:02d}:{(tot_secs % 3600) // 60:02d}:{tot_secs % 60:02d}"
+            else:
+                cur_str = f"{cur_secs // 60:02d}:{cur_secs % 60:02d}"
+                tot_str = f"{tot_secs // 60:02d}:{tot_secs % 60:02d}"
             
             self.current_time_lbl.setText(cur_str)
             self.total_time_lbl.setText(tot_str)
@@ -2466,6 +2735,9 @@ class BingeBoxPlayer(QMainWindow):
             try:
                 tracks = self.mpv_player.track_list
                 sub_count = 0
+                selected_idx = 0
+                # Add option to turn off subtitles
+                self.sub_track_combo.addItem("❌ Disable Subtitles", "no")
                 for track in tracks:
                     if track.get('type') == 'sub':
                         sub_count += 1
@@ -2473,17 +2745,24 @@ class BingeBoxPlayer(QMainWindow):
                         title = track.get('title') or track.get('lang') or f"Track {t_id}"
                         self.sub_track_combo.addItem(title, t_id)
                         if track.get('selected'):
-                            self.sub_track_combo.setCurrentIndex(self.sub_track_combo.count() - 1)
+                            selected_idx = self.sub_track_combo.count() - 1
                 if sub_count == 0:
+                    self.sub_track_combo.clear()
                     self.sub_track_combo.addItem("No subtitle tracks found", -1)
-            except Exception:
+                else:
+                    self.sub_track_combo.setCurrentIndex(selected_idx)
+            except Exception as e:
+                self.sub_track_combo.clear()
                 self.sub_track_combo.addItem("No subtitle tracks found", -1)
         self.sub_track_combo.blockSignals(False)
         
     def sub_track_changed(self, index):
         track_id = self.sub_track_combo.itemData(index)
         if track_id is not None and track_id != -1 and self.mpv_player:
-            self.mpv_player.sid = track_id
+            try:
+                self.mpv_player.sid = track_id
+            except Exception as e:
+                print(f"[Subtitles] Error updating subtitle track to {track_id}: {e}")
 
     # ==========================================================================
     # BOOKMARKS CONTROLS
@@ -2598,6 +2877,79 @@ class BingeBoxPlayer(QMainWindow):
         import webbrowser
         webbrowser.open("https://buymeacoffee.com/nemo7299")
 
+    def show_licenses_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Third-Party Licenses - BingeBox")
+        dialog.resize(720, 520)
+        
+        layout = QVBoxLayout(dialog)
+        text_browser = QTextBrowser(dialog)
+        text_browser.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 11px; background-color: #1A202C; color: #E2E8F0; padding: 10px;")
+        
+        search_paths = []
+        if hasattr(sys, '_MEIPASS'):
+            search_paths.append(sys._MEIPASS)
+        if getattr(sys, 'frozen', False):
+            search_paths.append(os.path.dirname(sys.executable))
+        search_paths.append(os.path.dirname(os.path.abspath(__file__)))
+        
+        license_text = ""
+        for path in search_paths:
+            candidate = os.path.join(path, "THIRD_PARTY_LICENSES.txt")
+            if os.path.exists(candidate):
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        license_text = f.read()
+                    break
+                except Exception:
+                    pass
+                    
+        if not license_text:
+            license_text = "THIRD_PARTY_LICENSES.txt could not be found."
+            
+        text_browser.setPlainText(license_text)
+        layout.addWidget(text_browser)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        dialog.exec()
+
+    def closeEvent(self, event):
+        if hasattr(self, '_seek_timer') and self._seek_timer and self._seek_timer.isActive():
+            self._seek_timer.stop()
+        if hasattr(self, 'remux_process') and self.remux_process:
+            try:
+                if self.remux_process.state() != QProcess.ProcessState.NotRunning:
+                    self.remux_process.kill()
+                    self.remux_process.waitForFinished(1000)
+            except Exception:
+                pass
+            self.remux_process = None
+        if hasattr(self, 'timer') and self.timer and self.timer.isActive():
+            self.timer.stop()
+        if hasattr(self, 'controls_hide_timer') and self.controls_hide_timer and self.controls_hide_timer.isActive():
+            self.controls_hide_timer.stop()
+        if hasattr(self, 'mpv_player') and self.mpv_player:
+            try:
+                self.mpv_player.stop()
+            except Exception:
+                pass
+            try:
+                self.mpv_player.terminate()
+            except Exception:
+                pass
+            self.mpv_player = None
+        if hasattr(self, '_active_workers'):
+            self._active_workers.clear()
+        if hasattr(self, 'thread_pool') and self.thread_pool:
+            try:
+                self.thread_pool.waitForDone(1000)
+            except Exception:
+                pass
+        event.accept()
+
 
 # ==========================================================================
 # MAIN EXECUTION ENTRY POINT
@@ -2609,6 +2961,8 @@ if __name__ == "__main__":
     # Set global application font
     app.setFont(QFont("Segoe UI", 9))
     
-    player = BingeBoxPlayer()
+    # Check for file path passed via command line or file association ("Open With")
+    initial_file = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
+    player = BingeBoxPlayer(initial_file=initial_file)
     player.show()
     sys.exit(app.exec())

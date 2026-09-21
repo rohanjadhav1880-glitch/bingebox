@@ -13,8 +13,9 @@ function createWindow() {
     frame: false, // Frameless design for a premium custom titlebar
     backgroundColor: '#060913',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false, // Allows window.require('electron') in Vite
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
       webSecurity: false,      // Allows playing local video files via file:// scheme
     },
     title: 'BingeBox'

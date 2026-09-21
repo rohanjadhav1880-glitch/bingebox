@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">BingeBox</string>
+    <string name="title_media_library">BingeBox Library</string>
+    <string name="title_equalizer">Audio Equalizer &amp; FX</string>
+    <string name="title_subtitles">Subtitle Track &amp; Sync</string>
+    <string name="title_ab_loop">A-B Repeat Loop</string>
+    <string name="title_settings">Settings &amp; Themes</string>
+</resources>

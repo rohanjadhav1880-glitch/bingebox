@@ -1,4 +1,5 @@
 import './style.css';
+import defaultLogo from './assets/logo.png';
 import {
   createIcons,
   Play,
@@ -33,9 +34,47 @@ import {
 } from 'lucide';
 
 // ==========================================================================
-// STATE MANAGEMENT
+// STATE MANAGEMENT & ELECTRON BRIDGE
 // ==========================================================================
-const ipcRenderer = window.require ? window.require('electron').ipcRenderer : null;
+const electronAPI = window.electronAPI || (window.require ? {
+  minimize: () => window.require('electron').ipcRenderer.send('window-minimize'),
+  maximize: () => window.require('electron').ipcRenderer.send('window-maximize'),
+  close: () => window.require('electron').ipcRenderer.send('window-close'),
+  openFileDialog: () => window.require('electron').ipcRenderer.invoke('open-file-dialog'),
+  selectDirectoryDialog: () => window.require('electron').ipcRenderer.invoke('select-directory-dialog'),
+  scanDirectoryPath: (p) => window.require('electron').ipcRenderer.invoke('scan-directory-path', p),
+  onGlobalPlayPause: (cb) => {
+    window.require('electron').ipcRenderer.on('global-play-pause', cb);
+    return () => window.require('electron').ipcRenderer.removeListener('global-play-pause', cb);
+  },
+  onGlobalNextTrack: (cb) => {
+    window.require('electron').ipcRenderer.on('global-next-track', cb);
+    return () => window.require('electron').ipcRenderer.removeListener('global-next-track', cb);
+  },
+  onGlobalPrevTrack: (cb) => {
+    window.require('electron').ipcRenderer.on('global-prev-track', cb);
+    return () => window.require('electron').ipcRenderer.removeListener('global-prev-track', cb);
+  }
+} : null);
+
+const ipcRenderer = electronAPI ? {
+  send: (channel, ...args) => {
+    if (channel === 'window-minimize') electronAPI.minimize();
+    else if (channel === 'window-maximize') electronAPI.maximize();
+    else if (channel === 'window-close') electronAPI.close();
+  },
+  invoke: (channel, ...args) => {
+    if (channel === 'open-file-dialog') return electronAPI.openFileDialog();
+    if (channel === 'select-directory-dialog') return electronAPI.selectDirectoryDialog();
+    if (channel === 'scan-directory-path') return electronAPI.scanDirectoryPath(args[0]);
+    return Promise.resolve(null);
+  },
+  on: (channel, cb) => {
+    if (channel === 'global-play-pause' && electronAPI.onGlobalPlayPause) return electronAPI.onGlobalPlayPause(cb);
+    if (channel === 'global-next-track' && electronAPI.onGlobalNextTrack) return electronAPI.onGlobalNextTrack(cb);
+    if (channel === 'global-prev-track' && electronAPI.onGlobalPrevTrack) return electronAPI.onGlobalPrevTrack(cb);
+  }
+} : null;
 
 const state = {
   playlist: [
@@ -616,12 +655,13 @@ const updatePlayPauseUI = () => {
   if (video.paused) {
     icon.setAttribute('data-lucide', 'play');
     playBtn.title = 'Play (Space)';
+    stopAmbientGlowLoop();
   } else {
     icon.setAttribute('data-lucide', 'pause');
     playBtn.title = 'Pause (Space)';
     
     // Trigger Ambient Glow render loop
-    requestAnimationFrame(renderAmbientGlowFrame);
+    startAmbientGlowLoop();
   }
   refreshIcons();
 };
@@ -764,25 +804,24 @@ const toggleMute = () => {
 
 // Seek Bar Interaction
 const seek = (e) => {
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return;
   const rect = progressContainer.getBoundingClientRect();
+  if (rect.width <= 0) return;
   const clickX = e.clientX - rect.left;
-  const width = rect.width;
-  const percentage = Math.max(0, Math.min(1, clickX / width));
+  const percentage = Math.max(0, Math.min(1, clickX / rect.width));
   video.currentTime = percentage * video.duration;
 };
 
 // Show Tooltip over seek bar on hover
 const handleSeekTooltip = (e) => {
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return;
   const rect = progressContainer.getBoundingClientRect();
+  if (rect.width <= 0) return;
   const hoverX = e.clientX - rect.left;
-  const width = rect.width;
-  const percentage = Math.max(0, Math.min(1, hoverX / width));
-  
-  if (video.duration) {
-    const hoverTime = percentage * video.duration;
-    seekTooltip.textContent = formatTime(hoverTime);
-    seekTooltip.style.left = `${hoverX}px`;
-  }
+  const percentage = Math.max(0, Math.min(1, hoverX / rect.width));
+  const hoverTime = percentage * video.duration;
+  seekTooltip.textContent = formatTime(hoverTime);
+  seekTooltip.style.left = `${hoverX}px`;
 };
 
 // Fullscreen
@@ -848,9 +887,27 @@ const closeAllDropdowns = () => {
 // AMBIENT GLOW LIGHTS (Canvas Frame Rendering)
 // ==========================================================================
 const ambientCtx = ambientCanvas.getContext('2d', { willReadFrequently: true });
+let ambientGlowAnimationId = null;
+
+const stopAmbientGlowLoop = () => {
+  if (ambientGlowAnimationId) {
+    cancelAnimationFrame(ambientGlowAnimationId);
+    ambientGlowAnimationId = null;
+  }
+};
+
+const startAmbientGlowLoop = () => {
+  stopAmbientGlowLoop();
+  if (!video.paused && !video.ended) {
+    ambientGlowAnimationId = requestAnimationFrame(renderAmbientGlowFrame);
+  }
+};
 
 const renderAmbientGlowFrame = () => {
-  if (video.paused || video.ended) return;
+  if (video.paused || video.ended) {
+    ambientGlowAnimationId = null;
+    return;
+  }
 
   // Keep drawing canvas size low for high-performance rendering
   if (ambientCanvas.width !== 64) {
@@ -864,7 +921,7 @@ const renderAmbientGlowFrame = () => {
     // Silently capture frame draw failures on loading state
   }
 
-  requestAnimationFrame(renderAmbientGlowFrame);
+  ambientGlowAnimationId = requestAnimationFrame(renderAmbientGlowFrame);
 };
 
 // ==========================================================================
@@ -1387,7 +1444,12 @@ const updateSubtitlesRendering = () => {
   );
 
   if (currentCue) {
-    subtitleText.innerHTML = currentCue.text.replace(/\n/g, '<br>');
+    subtitleText.replaceChildren();
+    const lines = (currentCue.text || '').split('\n');
+    lines.forEach((line, idx) => {
+      if (idx > 0) subtitleText.appendChild(document.createElement('br'));
+      subtitleText.appendChild(document.createTextNode(line));
+    });
     subtitleText.style.display = 'block';
   } else {
     subtitleText.style.display = 'none';
@@ -1444,7 +1506,7 @@ const renderPlaylistDOM = () => {
     li.innerHTML = `
       <div class="playlist-item-info">
         <div class="playlist-thumbnail-container">
-          <img class="playlist-thumbnail" id="playlist-thumb-${index}" src="/src/assets/logo.png" alt="${item.name}">
+          <img class="playlist-thumbnail" id="playlist-thumb-${index}" src="${defaultLogo}" alt="${item.name}">
           <div class="playlist-thumbnail-overlay">
             <i data-lucide="${isActive && !video.paused ? 'pause' : 'play'}"></i>
           </div>
@@ -1530,12 +1592,23 @@ const removePlaylistVideo = (index) => {
 };
 
 // Drag & drop file uploads
+const SUPPORTED_MEDIA_EXTS = ['.mp4', '.mkv', '.webm', '.ogg', '.avi', '.mov', '.flv', '.ts', '.m4v', '.wmv', '.mp3', '.wav', '.aac', '.flac', '.m4a'];
+
 const handleFilesUpload = (files) => {
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    if (file.type.startsWith('video/')) {
-      const localUrl = URL.createObjectURL(file);
-      addPlaylistVideo(file.name, localUrl, 'Local File');
+    const nameLower = (file.name || '').toLowerCase();
+    const isSupported = (file.type && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) ||
+                        SUPPORTED_MEDIA_EXTS.some(ext => nameLower.endsWith(ext));
+    if (isSupported) {
+      let fileUrl;
+      if (file.path) {
+        const cleanPath = file.path.replace(/\\/g, '/');
+        fileUrl = cleanPath.startsWith('/') ? `file://${cleanPath}` : `file:///${cleanPath}`;
+      } else {
+        fileUrl = URL.createObjectURL(file);
+      }
+      addPlaylistVideo(file.name, fileUrl, file.path ? 'PC Local File' : 'Local File');
     }
   }
 };
@@ -1572,7 +1645,7 @@ const renderLibraryDOM = () => {
     const fileUrl = cleanPath.startsWith('/') ? `file://${cleanPath}` : `file:///${cleanPath}`;
     
     const inPlaylist = state.playlist.some(item => item.url === fileUrl);
-    const isPlaying = inPlaylist && state.playlist[state.currentIndex].url === fileUrl && !video.paused;
+    const isPlaying = inPlaylist && state.playlist[state.currentIndex]?.url === fileUrl && !video.paused;
 
     const li = document.createElement('li');
     li.className = `playlist-item ${isPlaying ? 'active' : ''}`;
@@ -1581,7 +1654,7 @@ const renderLibraryDOM = () => {
     li.innerHTML = `
       <div class="playlist-item-info" style="flex: 1; overflow: hidden; padding-right: 8px;">
         <div class="playlist-thumbnail-container" style="margin-right: 0.5rem;">
-          <img class="playlist-thumbnail" id="library-thumb-${safeId}" src="/src/assets/logo.png" alt="${file.name}">
+          <img class="playlist-thumbnail" id="library-thumb-${safeId}" src="${defaultLogo}" alt="${file.name}">
           <div class="playlist-thumbnail-overlay">
             <i data-lucide="${isPlaying ? 'pause' : 'play'}"></i>
           </div>
@@ -2497,7 +2570,7 @@ window.addEventListener('keydown', (e) => {
     // 0-9 numerical seek keys
     e.preventDefault();
     const percent = parseInt(pressedKey) * 10;
-    if (video.duration) {
+    if (Number.isFinite(video.duration) && video.duration > 0) {
       video.currentTime = (percent / 100) * video.duration;
     }
   }

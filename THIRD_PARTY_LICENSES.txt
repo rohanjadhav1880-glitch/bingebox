@@ -1,0 +1,63 @@
+BINGEBOX THIRD-PARTY LICENSES & COMPLIANCE
+===========================================
+
+BingeBox incorporates, bundles, or links to third-party open-source components listed below. 
+Each component is subject to its own copyright and license terms.
+
+--------------------------------------------------------------------------------
+1. libmpv (libmpv-2.dll)
+--------------------------------------------------------------------------------
+License: GNU Lesser General Public License v2.1 or later (LGPLv2.1+)
+Copyright: Copyright (c) 2013-2026 mpv developers, MPlayer team
+License URL: https://github.com/mpv-player/mpv/blob/master/LICENSE.LGPL
+Project Home: https://mpv.io
+Usage: Dynamically linked library (C-API)
+
+--------------------------------------------------------------------------------
+2. FFmpeg (ffmpeg.exe)
+--------------------------------------------------------------------------------
+License: GNU General Public License v3.0 or later (GPLv3+)
+Configuration: --enable-gpl --enable-version3 (gyan.dev full build v8.0.1)
+Copyright: Copyright (c) 2000-2026 the FFmpeg developers
+License URL: https://www.gnu.org/licenses/gpl-3.0.html
+Project Home: https://ffmpeg.org
+Source Code Access: https://ffmpeg.org/download.html / https://www.gyan.dev/ffmpeg/builds/
+Usage: Bundled standalone CLI executable executed via child subprocess
+
+--------------------------------------------------------------------------------
+3. FFprobe (ffprobe.exe)
+--------------------------------------------------------------------------------
+License: GNU General Public License v3.0 or later (GPLv3+)
+Configuration: --enable-gpl --enable-version3 (gyan.dev full build v8.0.1)
+Copyright: Copyright (c) 2007-2026 the FFmpeg developers
+License URL: https://www.gnu.org/licenses/gpl-3.0.html
+Project Home: https://ffmpeg.org
+Source Code Access: https://ffmpeg.org/download.html / https://www.gyan.dev/ffmpeg/builds/
+Usage: Bundled standalone CLI executable executed via child subprocess
+
+--------------------------------------------------------------------------------
+4. MediaInfo (MediaInfo.dll)
+--------------------------------------------------------------------------------
+License: BSD 2-Clause License ("Simplified BSD License")
+Copyright: Copyright (c) 2002-2026 MediaArea.net SARL <Info@MediaArea.net>
+License URL: https://mediaarea.net/en/MediaInfo/License
+Project Home: https://mediaarea.net/en/MediaInfo
+Usage: Dynamically loaded shared library DLL
+
+--------------------------------------------------------------------------------
+5. PySide6
+--------------------------------------------------------------------------------
+License: GNU Lesser General Public License v3.0 (LGPLv3)
+Copyright: Copyright (C) 2026 The Qt Company Ltd. and other contributors
+License URL: https://code.qt.io/cgit/qt/qtbase.git/tree/LICENSES/LGPL-3.0.txt
+Project Home: https://www.qt.io/qt-for-python
+Usage: Dynamically imported Python module binding for Qt UI framework
+
+--------------------------------------------------------------------------------
+6. shiboken6
+--------------------------------------------------------------------------------
+License: GNU Lesser General Public License v3.0 (LGPLv3)
+Copyright: Copyright (C) 2026 The Qt Company Ltd. and other contributors
+License URL: https://code.qt.io/cgit/qt/qtbase.git/tree/LICENSES/LGPL-3.0.txt
+Project Home: https://www.qt.io/qt-for-python
+Usage: Dynamically imported Python C++/Python bindings helper module

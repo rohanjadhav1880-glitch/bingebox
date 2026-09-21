@@ -15,6 +15,8 @@ engine_binaries = [
 # Application Data Bundles
 app_datas = [
     ('bingebox_icon.ico', '.'),
+    ('THIRD_PARTY_LICENSES.txt', '.'),
+    ('LICENSE', '.'),
     ('src/assets', 'src/assets'),
     ('public', 'public')
 ]

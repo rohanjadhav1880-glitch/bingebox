@@ -53,6 +53,12 @@ from PySide6.QtCore import *
 from PySide6.QtGui import *
 from PySide6.QtWidgets import *
 
+SUPPORTED_MEDIA_EXTENSIONS = (
+    '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts',
+    '.m2ts', '.vob', '.ogv', '.3gp', '.rmvb', '.divx', '.m4v',
+    '.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a'
+)
+
 # ==========================================================================
 # CUSTOM STYLING (QSS) THEME SYSTEM
 # ==========================================================================
@@ -459,7 +465,7 @@ class DragDropListWidget(QListWidget):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             collected_files = []
-            video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts', '.mp3', '.wav', '.flac')
+            video_extensions = SUPPORTED_MEDIA_EXTENSIONS
             for url in event.mimeData().urls():
                 file_path = url.toLocalFile()
                 if os.path.exists(file_path):
@@ -1009,8 +1015,8 @@ class BingeBoxPlayer(QMainWindow):
         speed_lbl.setStyleSheet("font-size: 10px;")
         buttons_row.addWidget(speed_lbl)
         self.speed_combo = QComboBox(self.controls_panel)
-        self.speed_combo.addItems(["0.5x", "0.75x", "1.0x (Normal)", "1.25x", "1.5x", "2.0x"])
-        self.speed_combo.setCurrentIndex(2)
+        self.speed_combo.addItems(["0.25x", "0.5x", "0.75x", "1.0x (Normal)", "1.25x", "1.5x", "2.0x", "3.0x", "4.0x"])
+        self.speed_combo.setCurrentIndex(3)
         self.speed_combo.currentIndexChanged.connect(self.speed_changed)
         buttons_row.addWidget(self.speed_combo)
         
@@ -1656,9 +1662,10 @@ class BingeBoxPlayer(QMainWindow):
     # ==========================================================================
 
     def open_file_dialog(self):
+        ext_filter = " ".join("*" + ext for ext in SUPPORTED_MEDIA_EXTENSIONS)
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Open Video Files", "",
-            "Video files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.mp3 *.wav *.flac);;All files (*.*)"
+            self, "Open Media Files", "",
+            f"Media files ({ext_filter});;All files (*.*)"
         )
         if files:
             self.add_local_files(files)
@@ -1862,6 +1869,12 @@ class BingeBoxPlayer(QMainWindow):
         self.ab_start = None
         self.ab_end = None
         self.ab_active = False
+        try:
+            if self.mpv_player:
+                self.mpv_player['ab-loop-a'] = 'no'
+                self.mpv_player['ab-loop-b'] = 'no'
+        except Exception:
+            pass
         self.ab_loop_btn.setObjectName("")
         self.ab_loop_btn.style().unpolish(self.ab_loop_btn)
         self.ab_loop_btn.style().polish(self.ab_loop_btn)
@@ -2259,7 +2272,7 @@ class BingeBoxPlayer(QMainWindow):
             self.mpv_player.video_aspect_override = ratios[index]
 
     def speed_changed(self, index):
-        speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+        speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
         if 0 <= index < len(speeds) and self.mpv_player:
             self.mpv_player.speed = speeds[index]
 
@@ -2289,7 +2302,12 @@ class BingeBoxPlayer(QMainWindow):
                 self.ab_end = self.ab_start + 200
             self.ab_active = True
             self.ab_loop_btn.setText("Clear Loop")
-            self.mpv_player.time_pos = self.ab_start / 1000.0
+            try:
+                self.mpv_player['ab-loop-a'] = self.ab_start / 1000.0
+                self.mpv_player['ab-loop-b'] = self.ab_end / 1000.0
+                self.mpv_player.time_pos = self.ab_start / 1000.0
+            except Exception:
+                pass
             self.slider.set_ab_loop(self.ab_start, self.ab_end, True)
         else:
             self.ab_start = None
@@ -2297,6 +2315,11 @@ class BingeBoxPlayer(QMainWindow):
             self.ab_active = False
             self.ab_loop_btn.setText("A-B Loop")
             self.ab_loop_btn.setObjectName("")
+            try:
+                self.mpv_player['ab-loop-a'] = 'no'
+                self.mpv_player['ab-loop-b'] = 'no'
+            except Exception:
+                pass
             self.slider.set_ab_loop(None, None, False)
             
         self.ab_loop_btn.style().unpolish(self.ab_loop_btn)
@@ -2394,10 +2417,6 @@ class BingeBoxPlayer(QMainWindow):
             
             self.current_time_lbl.setText(cur_str)
             self.total_time_lbl.setText(tot_str)
-            
-            if self.ab_active and self.ab_start is not None and self.ab_end is not None:
-                if time >= self.ab_end or time < self.ab_start:
-                    self.mpv_player.time_pos = self.ab_start / 1000.0
         else:
             self.slider.setMaximum(0)
             self.slider.setValue(0)
@@ -2850,7 +2869,7 @@ class BingeBoxPlayer(QMainWindow):
             self.lib_path_lbl.setText("❌ Folder not found!")
             return
             
-        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts', '.mp3', '.wav', '.flac')
+        video_extensions = SUPPORTED_MEDIA_EXTENSIONS
         try:
             files = sorted(os.listdir(dir_path))
             for file in files:

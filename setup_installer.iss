@@ -3,7 +3,7 @@
 ; ============================================================================
 
 #define MyAppName "BingeBox"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "CAPTAIN NEMO"
 #define MyAppExeName "BingeBox.exe"
 
@@ -15,10 +15,10 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\BingeBox
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-LicenseFile=R:\dev\video player\THIRD_PARTY_LICENSES.txt
-OutputDir=R:\dev\video player\dist
+LicenseFile=THIRD_PARTY_LICENSES.txt
+OutputDir=dist
 OutputBaseFilename=BingeBox_Setup
-SetupIconFile=R:\dev\video player\bingebox_icon.ico
+SetupIconFile=bingebox_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -31,7 +31,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "fileassoc"; Description: "Associate BingeBox with supported video files (.mp4, .mkv, .avi, .wmv, .webm, etc.)"; GroupDescription: "File Associations:"
 
 [Files]
-Source: "R:\dev\video player\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

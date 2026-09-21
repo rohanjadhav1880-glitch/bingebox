@@ -14,13 +14,13 @@ Designed from the ground up to require zero external dependencies (no VLC instal
 
 ## ✨ Features
 
-- **🚀 100% Standalone & Offline**: Ships with embedded `libmpv` and `FFmpeg` engines. No VLC or third-party codecs required. Zero telemetry, zero external network calls.
+- **🚀 100% Standalone & Offline**: Ships with embedded `libmpv` and `FFmpeg` engines. No VLC or third-party codecs required. Zero telemetry, zero analytics tracking, and no background network calls (100% private).
 - **🎞️ Universal Format Support**: Plays virtually every video container and audio codec (`.mp4`, `.mkv`, `.webm`, `.avi`, `.mov`, `.flv`, `.ts`, `.m2ts`, `.vob`, `.ogv`, `.3gp`, `.rmvb`, `.divx`, `.mp3`, `.flac`, `.wav`, etc.).
 - **⚡ Hardware-Accelerated Decoding**: High-efficiency GPU decoding (`hwdec=auto-safe`, Direct3D 11 on Windows, MediaCodec on Android) powered by `libmpv`.
 - **🎨 Obsidian Modern UI**: Custom glassmorphic dark interface with responsive controls, thumbnail previews, dynamic volume / seeking sliders, and auto-hiding controls.
 - **🎛️ Audio Enhancer & Equalizer**: Multi-preset equalizer, volume booster, audio delay synchronization, dynamic volume normalizer, and Movie Night Mode (dialogue booster).
-- **💬 Subtitle Engine**: Automatic embedded subtitle detection (`.srt`, `.ass`, `.vtt`) with custom delay adjustment offsets and safe DOM rendering.
-- **🔁 A-B Looper & Playback Speed**: Precise segment looping and smooth playback speed scaling (`0.25x` to `4.0x`).
+- **💬 Subtitle Engine**: Automatic embedded and external subtitle detection (`.srt`, `.ass`, `.vtt`) with hardware-accelerated text rendering via libass and real-time sync delay offsets.
+- **🔁 A-B Looper & Playback Speed**: Precise native `libmpv` segment looping (`ab-loop-a` / `ab-loop-b`) and smooth playback speed scaling (`0.25x` to `4.0x`).
 - **📱 Native Android Support**: Touch gestures (double-tap ±10s seek), Picture-in-Picture (PiP), screen orientation adaptivity, screen lock, and device video scanning via Android MediaStore.
 - **📦 One-Click Windows Installer**: Built with Inno Setup for Start Menu, Desktop shortcuts, and right-click *"Play with BingeBox"* Windows Explorer integration.
 
@@ -103,7 +103,7 @@ python main.py
 python -m PyInstaller main.spec --noconfirm
 
 # Build Inno Setup single-file installer (requires Inno Setup 6)
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup_installer.iss
+iscc setup_installer.iss
 ```
 
 ---

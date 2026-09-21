@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMainWindow, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
+    QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
     QSlider, QStyle, QTabWidget, QTextBrowser, QTextEdit, QVBoxLayout,
     QWidget
 )
@@ -676,6 +676,7 @@ class BingeBoxPlayer(QMainWindow):
         self.current_index = -1
         self.repeat_mode = "off" # off, one, all
         self.shuffle_enabled = False
+        self._play_history = []
         
         self.theme = "obsidian"
         self.accent = "violet"
@@ -1024,13 +1025,23 @@ class BingeBoxPlayer(QMainWindow):
                 mute=mute_init
             )
         except Exception as e:
-            logging.warning(f"Fallback mpv initialization: {e}")
-            self.mpv_player = mpv.MPV(
-                wid=str(int(self.video_frame.winId())),
-                keep_open=True,
-                volume=vol_init,
-                mute=mute_init
-            )
+            logging.warning(f"Standard mpv initialization failed, attempting fallback: {e}")
+            try:
+                self.mpv_player = mpv.MPV(
+                    wid=str(int(self.video_frame.winId())),
+                    keep_open=True,
+                    volume=vol_init,
+                    mute=mute_init
+                )
+            except Exception as e2:
+                logging.critical(f"Failed to initialize mpv engine: {e2}")
+                self.mpv_player = None
+                QMessageBox.critical(
+                    self,
+                    "Playback Engine Error",
+                    f"BingeBox could not initialize libmpv playback engine.\n\n"
+                    f"Please verify that libmpv-2.dll is located in the 'engine' folder.\n\nError: {e2}"
+                )
         
         self.video_area_layout.addWidget(self.video_container, 1)
         
@@ -1982,6 +1993,12 @@ class BingeBoxPlayer(QMainWindow):
 
     def playlist_item_clicked(self, item):
         idx = self.playlist_list.row(item)
+        if 0 <= self.current_index < len(self.playlist) and self.current_index != idx:
+            if not hasattr(self, '_play_history'):
+                self._play_history = []
+            self._play_history.append(self.current_index)
+            if len(self._play_history) > 100:
+                self._play_history.pop(0)
         self.load_video(idx, autoplay=True)
         self.play_video()
 
@@ -2037,6 +2054,7 @@ class BingeBoxPlayer(QMainWindow):
         except Exception:
             pass
         self.ab_loop_btn.setObjectName("")
+        self.ab_loop_btn.setText("A-B Loop")
         self.ab_loop_btn.style().unpolish(self.ab_loop_btn)
         self.ab_loop_btn.style().polish(self.ab_loop_btn)
         self.ab_loop_btn.update()
@@ -2162,6 +2180,13 @@ class BingeBoxPlayer(QMainWindow):
         if not self.playlist:
             return
             
+        if 0 <= self.current_index < len(self.playlist):
+            if not hasattr(self, '_play_history'):
+                self._play_history = []
+            self._play_history.append(self.current_index)
+            if len(self._play_history) > 100:
+                self._play_history.pop(0)
+
         if not is_auto:
             self._consecutive_failures = 0
             
@@ -2232,8 +2257,6 @@ class BingeBoxPlayer(QMainWindow):
         self.total_time_lbl.setText("00:00")
         self._consecutive_failures = 0
         self._playback_started = False
-        if self.statusBar():
-            self.statusBar().showMessage("Unable to play media: all playlist items failed.", 5000)
         if hasattr(self, 'remux_status_lbl'):
             self.remux_status_lbl.setText("❌ All items unplayable or failed")
             QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
@@ -2242,11 +2265,16 @@ class BingeBoxPlayer(QMainWindow):
         if not self.playlist:
             return
             
-        if self.shuffle_enabled and len(self.playlist) > 1:
-            import random
-            prev_idx = self.current_index
-            while prev_idx == self.current_index:
-                prev_idx = random.randint(0, len(self.playlist) - 1)
+        if self.shuffle_enabled:
+            if hasattr(self, '_play_history') and self._play_history:
+                prev_idx = self._play_history.pop()
+            elif len(self.playlist) > 1:
+                import random
+                prev_idx = self.current_index
+                while prev_idx == self.current_index:
+                    prev_idx = random.randint(0, len(self.playlist) - 1)
+            else:
+                prev_idx = 0
         else:
             prev_idx = self.current_index - 1
             if prev_idx < 0:
@@ -3170,7 +3198,7 @@ class BingeBoxPlayer(QMainWindow):
         text_browser.setPlainText(license_text)
         layout.addWidget(text_browser)
         
-        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
         
@@ -3204,13 +3232,13 @@ class BingeBoxPlayer(QMainWindow):
             except Exception:
                 pass
             self.mpv_player = None
-        if hasattr(self, '_active_workers'):
-            self._active_workers.clear()
         if hasattr(self, 'thread_pool') and self.thread_pool:
             try:
                 self.thread_pool.waitForDone(1000)
             except Exception:
                 pass
+        if hasattr(self, '_active_workers'):
+            self._active_workers.clear()
         event.accept()
 
 

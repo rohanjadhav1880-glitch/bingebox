@@ -80,4 +80,6 @@ Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\audio\shell\PlayWith
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\audio\shell\PlayWithBingeBox\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
 
 [UninstallDelete]
-Type: filesandordirs; Name: "{localappdata}\BingeBox"
+; Clean up generated thumbnail caches and log files upon uninstall, preserving user settings
+Type: filesandordirs; Name: "{localappdata}\BingeBox\thumbnails"
+Type: files; Name: "{localappdata}\BingeBox\bingebox.log*"

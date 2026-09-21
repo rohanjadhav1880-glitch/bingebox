@@ -3,11 +3,13 @@
 import os
 import sys
 
-# Lean Engine Binaries (Only active components: libmpv, FFmpeg, D3DCompiler)
+# Required Engine Binaries (libmpv, FFmpeg, D3DCompiler)
+required_binaries = ['engine/libmpv-2.dll', 'engine/ffmpeg.exe', 'engine/D3DCompiler_47_cor3.dll']
 engine_binaries = []
-for binary in ['engine/libmpv-2.dll', 'engine/ffmpeg.exe', 'engine/D3DCompiler_47_cor3.dll']:
-    if os.path.exists(binary):
-        engine_binaries.append((binary, 'engine'))
+for binary in required_binaries:
+    if not os.path.exists(binary):
+        raise FileNotFoundError(f"Required engine binary not found: {binary}")
+    engine_binaries.append((binary, 'engine'))
 
 # Application Data Bundles
 app_datas = [
@@ -43,21 +45,30 @@ pyz = PYZ(a.pure, a.zipped_data)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='BingeBox',
     icon='bingebox_icon.ico',
+    version='file_version_info.txt',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='BingeBox',
 )

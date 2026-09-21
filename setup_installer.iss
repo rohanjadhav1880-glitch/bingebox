@@ -31,10 +31,10 @@ CloseApplications=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "fileassoc"; Description: "Associate BingeBox with supported media files (.mp4, .mkv, .avi, .wmv, .webm, etc.)"; GroupDescription: "File Associations:"
+Name: "fileassoc"; Description: "Associate BingeBox with supported media files (.mp4, .mkv, .avi, .mp3, .flac, etc.)"; GroupDescription: "File Associations:"
 
 [Files]
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\BingeBox\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -62,6 +62,14 @@ Root: HKA; Subkey: "Software\Classes\.m2ts\OpenWithProgids"; ValueType: string; 
 Root: HKA; Subkey: "Software\Classes\.vob\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\.3gp\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 
+; Associate Common Audio Extensions
+Root: HKA; Subkey: "Software\Classes\.mp3\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.wav\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.flac\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.aac\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.ogg\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.m4a\OpenWithProgids"; ValueType: string; ValueName: "BingeBox.Media"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+
 ; Right-click "Play with BingeBox" Context Menu for Video and Audio types only
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\video\shell\PlayWithBingeBox"; ValueType: string; ValueName: ""; ValueData: "Play with BingeBox"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\video\shell\PlayWithBingeBox"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName},0"; Tasks: fileassoc
@@ -70,3 +78,6 @@ Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\video\shell\PlayWith
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\audio\shell\PlayWithBingeBox"; ValueType: string; ValueName: ""; ValueData: "Play with BingeBox"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\audio\shell\PlayWithBingeBox"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName},0"; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\audio\shell\PlayWithBingeBox\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{localappdata}\BingeBox"

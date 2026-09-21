@@ -4,6 +4,9 @@ import json
 import copy
 import logging
 import math
+import getpass
+import hashlib
+from logging.handlers import RotatingFileHandler
 
 # Setup Local Engine Paths for libmpv & FFmpeg
 search_paths = []
@@ -34,31 +37,34 @@ for p in search_paths:
             except Exception:
                 pass
 
-# Locate FFMPEG and FFPROBE binaries
+# Locate bundled or system FFMPEG binary
 FFMPEG_BIN = "ffmpeg"
-FFPROBE_BIN = "ffprobe"
 
 for p in search_paths:
     ff_candidate = os.path.join(p, "ffmpeg.exe")
-    fp_candidate = os.path.join(p, "ffprobe.exe")
     if os.path.exists(ff_candidate):
         FFMPEG_BIN = ff_candidate
         break
 
-for p in search_paths:
-    fp_candidate = os.path.join(p, "ffprobe.exe")
-    if os.path.exists(fp_candidate):
-        FFPROBE_BIN = fp_candidate
-        break
-
 import mpv
-from PySide6.QtCore import *
-from PySide6.QtGui import *
-from PySide6.QtWidgets import *
+from PySide6.QtCore import (
+    QCoreApplication, QEvent, QObject, QProcess, QRunnable, QSize,
+    QStandardPaths, QThreadPool, QTimer, Qt, Signal, QThread
+)
+from PySide6.QtGui import (
+    QBrush, QColor, QFont, QIcon, QKeySequence, QPainter, QPen, QPixmap
+)
+from PySide6.QtWidgets import (
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+    QDialogButtonBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMainWindow, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
+    QSlider, QStyle, QTabWidget, QTextBrowser, QTextEdit, QVBoxLayout,
+    QWidget
+)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 QCoreApplication.setApplicationName("BingeBox")
-QCoreApplication.setOrganizationName("BingeBox")
 
 def get_resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'):
@@ -68,11 +74,18 @@ def get_resource_path(relative_path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 def get_app_data_dir():
-    app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
-    if not app_data:
+    # Canonical application data path: %LOCALAPPDATA%\BingeBox
+    loc = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+    if not loc:
         app_data = os.path.expanduser("~/.bingebox")
-    elif not app_data.endswith("BingeBox"):
-        app_data = os.path.join(app_data, "BingeBox")
+    else:
+        norm = os.path.normpath(loc)
+        parts = norm.split(os.sep)
+        if "BingeBox" in parts:
+            idx = parts.index("BingeBox")
+            app_data = os.sep.join(parts[:idx + 1])
+        else:
+            app_data = os.path.join(norm, "BingeBox")
     os.makedirs(app_data, exist_ok=True)
     return app_data
 
@@ -84,28 +97,54 @@ def get_thumbnails_cache_dir():
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 
-# Setup file logging and crash handler for console-less windowed builds
+# Setup rotating file logging and crash handler for console-less windowed builds
 LOG_FILE_PATH = os.path.join(get_app_data_dir(), "bingebox.log")
-logging.basicConfig(
-    filename=LOG_FILE_PATH,
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+log_handler = RotatingFileHandler(
+    LOG_FILE_PATH,
+    maxBytes=2 * 1024 * 1024, # 2 MB limit
+    backupCount=2,
     encoding="utf-8"
 )
+log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+log_handler.setFormatter(log_formatter)
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.handlers.clear()
+root_logger.addHandler(log_handler)
 
 def log_uncaught_exceptions(exctype, value, tb):
     import traceback
     err_msg = "".join(traceback.format_exception(exctype, value, tb))
     logging.critical(f"Uncaught exception:\n{err_msg}")
-    print(err_msg, file=sys.stderr)
+    sys.stderr.write(err_msg)
 
 sys.excepthook = log_uncaught_exceptions
 
-SUPPORTED_MEDIA_EXTENSIONS = (
-    '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts',
-    '.m2ts', '.vob', '.ogv', '.3gp', '.rmvb', '.divx', '.m4v',
+AUDIO_EXTENSIONS = (
     '.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a'
 )
+
+VIDEO_EXTENSIONS = (
+    '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts',
+    '.m2ts', '.vob', '.ogv', '.3gp', '.rmvb', '.divx', '.m4v'
+)
+
+SUPPORTED_MEDIA_EXTENSIONS = VIDEO_EXTENSIONS + AUDIO_EXTENSIONS
+
+def get_thumbnail_cache_path(media_path):
+    if not media_path:
+        return None
+    if media_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+        return None
+    if media_path.lower().endswith(AUDIO_EXTENSIONS):
+        return None
+    try:
+        mtime = os.path.getmtime(media_path) if os.path.exists(media_path) else 0
+    except Exception:
+        mtime = 0
+    hash_seed = f"{media_path}_{mtime}"
+    path_hash = hashlib.md5(hash_seed.encode('utf-8'), usedforsecurity=False).hexdigest()
+    return os.path.join(get_thumbnails_cache_dir(), f"{path_hash}.png")
 
 # ==========================================================================
 # CUSTOM STYLING (QSS) THEME SYSTEM
@@ -483,6 +522,37 @@ class ABLoopSlider(QSlider):
         painter.end()
 
 
+class FolderScanSignals(QObject):
+    finished = Signal(list)
+
+class FolderScanWorker(QRunnable):
+    def __init__(self, raw_paths):
+        super().__init__()
+        self.raw_paths = raw_paths
+        self.signals = FolderScanSignals()
+
+    def run(self):
+        collected = []
+        for path in self.raw_paths:
+            if not path:
+                continue
+            if path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+                collected.append(path)
+                continue
+            if not os.path.exists(path):
+                continue
+            if os.path.isdir(path):
+                try:
+                    for root, _, files in os.walk(path):
+                        for f in sorted(files):
+                            if f.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
+                                collected.append(os.path.join(root, f))
+                except Exception as e:
+                    logging.warning(f"Failed to scan dropped folder {path}: {e}")
+            elif path.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
+                collected.append(path)
+        self.signals.finished.emit(collected)
+
 class DragDropListWidget(QListWidget):
     file_dropped = Signal(str)
     files_dropped = Signal(list)
@@ -512,24 +582,11 @@ class DragDropListWidget(QListWidget):
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            collected_files = []
-            video_extensions = SUPPORTED_MEDIA_EXTENSIONS
-            for url in event.mimeData().urls():
-                file_path = url.toLocalFile()
-                if os.path.exists(file_path):
-                    if os.path.isdir(file_path):
-                        # Scan folder recursively for media files
-                        try:
-                            for root, dirs, files in os.walk(file_path):
-                                for f in sorted(files):
-                                    if f.lower().endswith(video_extensions):
-                                        collected_files.append(os.path.join(root, f))
-                        except Exception as e:
-                            print("Failed to scan dropped folder:", e)
-                    elif file_path.lower().endswith(video_extensions):
-                        collected_files.append(file_path)
-            if collected_files:
-                self.files_dropped.emit(collected_files)
+            raw_paths = [url.toLocalFile() for url in event.mimeData().urls() if url.toLocalFile()]
+            if raw_paths:
+                worker = FolderScanWorker(raw_paths)
+                worker.signals.finished.connect(lambda files: self.files_dropped.emit(files) if files else None)
+                QThreadPool.globalInstance().start(worker)
         else:
             super().dropEvent(event)
             self.order_changed.emit()
@@ -542,23 +599,10 @@ class LibraryListWidget(QListWidget):
 
 
 def get_video_thumbnail_static(video_path):
-    if not video_path:
+    thumb_path = get_thumbnail_cache_path(video_path)
+    if not thumb_path:
         return None
         
-    # Skip ffmpeg subprocess extraction for network streams
-    if video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
-        return None
-        
-    cache_dir = get_thumbnails_cache_dir()
-    import hashlib
-    try:
-        mtime = os.path.getmtime(video_path) if os.path.exists(video_path) else 0
-    except Exception:
-        mtime = 0
-    hash_seed = f"{video_path}_{mtime}"
-    path_hash = hashlib.md5(hash_seed.encode('utf-8'), usedforsecurity=False).hexdigest()
-    thumb_path = os.path.join(cache_dir, f"{path_hash}.png")
-    
     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
         return thumb_path
         
@@ -582,6 +626,7 @@ def get_video_thumbnail_static(video_path):
 
 class ThumbnailSignals(QObject):
     finished = Signal(str, str)
+    failed = Signal(str)
 
 class ThumbnailWorker(QRunnable):
     def __init__(self, video_path):
@@ -594,8 +639,11 @@ class ThumbnailWorker(QRunnable):
             thumb_path = get_video_thumbnail_static(self.video_path)
             if thumb_path:
                 self.signals.finished.emit(self.video_path, thumb_path)
+            else:
+                self.signals.failed.emit(self.video_path)
         except Exception as e:
-            logging.warning(f"Error in thumbnail worker: {e}")
+            logging.warning(f"Error in thumbnail worker for {self.video_path}: {e}")
+            self.signals.failed.emit(self.video_path)
 
 
 # ==========================================================================
@@ -655,6 +703,12 @@ class BingeBoxPlayer(QMainWindow):
         self._seek_timer.timeout.connect(self._do_debounced_seek)
         self._pending_seek_sec = None
         self._slider_active = False
+
+        # Debounce timer for saving settings (500ms delay)
+        self._save_settings_timer = QTimer(self)
+        self._save_settings_timer.setSingleShot(True)
+        self._save_settings_timer.setInterval(500)
+        self._save_settings_timer.timeout.connect(self._do_save_settings)
         
         self.ab_start = None
         self.ab_end = None
@@ -711,13 +765,13 @@ class BingeBoxPlayer(QMainWindow):
             self.rescan_library()
             
         if self.initial_file:
-            self.add_local_file(self.initial_file)
+            self.add_local_file(self.initial_file, auto_load=False)
             if self.initial_file in self.playlist:
                 idx = self.playlist.index(self.initial_file)
-                self.load_video(idx)
+                self.load_video(idx, autoplay=True)
                 self.play_video()
         elif self.playlist:
-            self.load_video(0)
+            self.load_video(0, autoplay=False)
             
         # Draw dynamic shortcuts list
         self.update_shortcuts_ui()
@@ -733,22 +787,30 @@ class BingeBoxPlayer(QMainWindow):
     def load_settings(self):
         try:
             settings_file = get_settings_file_path()
-            # Migration check from local application root directory (never relative cwd)
+            # Migration check from local application root directory or legacy nested directory
             if not os.path.exists(settings_file):
-                check_dirs = []
-                if getattr(sys, 'frozen', False):
-                    check_dirs.append(os.path.dirname(sys.executable))
-                check_dirs.append(os.path.dirname(os.path.abspath(__file__)))
-                for d in check_dirs:
-                    for legacy_name in ("bingebox_settings.json", "aether_settings.json"):
-                        legacy_path = os.path.join(d, legacy_name)
-                        if os.path.exists(legacy_path):
-                            try:
-                                import shutil
-                                shutil.copy2(legacy_path, settings_file)
-                                break
-                            except Exception:
-                                pass
+                nested_legacy = os.path.join(get_app_data_dir(), "BingeBox", "bingebox_settings.json")
+                if os.path.exists(nested_legacy):
+                    try:
+                        import shutil
+                        shutil.copy2(nested_legacy, settings_file)
+                    except Exception:
+                        pass
+                if not os.path.exists(settings_file):
+                    check_dirs = []
+                    if getattr(sys, 'frozen', False):
+                        check_dirs.append(os.path.dirname(sys.executable))
+                    check_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+                    for d in check_dirs:
+                        for legacy_name in ("bingebox_settings.json", "aether_settings.json"):
+                            legacy_path = os.path.join(d, legacy_name)
+                            if os.path.exists(legacy_path):
+                                try:
+                                    import shutil
+                                    shutil.copy2(legacy_path, settings_file)
+                                    break
+                                except Exception:
+                                    pass
                 
             if os.path.exists(settings_file):
                 with open(settings_file, "r", encoding="utf-8") as f:
@@ -776,7 +838,18 @@ class BingeBoxPlayer(QMainWindow):
         except Exception as e:
             logging.error(f"Failed to load settings: {e}")
 
-    def save_settings(self):
+    def save_settings(self, immediate=False):
+        if immediate:
+            if hasattr(self, '_save_settings_timer') and self._save_settings_timer.isActive():
+                self._save_settings_timer.stop()
+            self._do_save_settings()
+        else:
+            if hasattr(self, '_save_settings_timer'):
+                self._save_settings_timer.start()
+            else:
+                self._do_save_settings()
+
+    def _do_save_settings(self):
         try:
             settings_file = get_settings_file_path()
             tmp_file = settings_file + ".tmp"
@@ -809,21 +882,11 @@ class BingeBoxPlayer(QMainWindow):
         if not video_path:
             return
             
-        # Skip ffmpeg subprocess extraction for network streams
-        if video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+        thumb_path = get_thumbnail_cache_path(video_path)
+        if not thumb_path:
             return
             
         # 2. Check if already cached on disk
-        cache_dir = get_thumbnails_cache_dir()
-        import hashlib
-        try:
-            mtime = os.path.getmtime(video_path) if os.path.exists(video_path) else 0
-        except Exception:
-            mtime = 0
-        hash_seed = f"{video_path}_{mtime}"
-        path_hash = hashlib.md5(hash_seed.encode('utf-8'), usedforsecurity=False).hexdigest()
-        thumb_path = os.path.join(cache_dir, f"{path_hash}.png")
-        
         if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
             item.setIcon(QIcon(thumb_path))
             return
@@ -841,8 +904,13 @@ class BingeBoxPlayer(QMainWindow):
             self._active_workers.discard(worker)
             self._pending_thumbnail_paths.discard(v_path)
             self.update_ui_thumbnails(v_path, t_path)
+            
+        def on_failed(v_path):
+            self._active_workers.discard(worker)
+            self._pending_thumbnail_paths.discard(v_path)
                     
         worker.signals.finished.connect(on_finished)
+        worker.signals.failed.connect(on_failed)
         self.thread_pool.start(worker)
 
     def init_ui(self):
@@ -1735,7 +1803,7 @@ class BingeBoxPlayer(QMainWindow):
         if files:
             self.add_local_files(files)
 
-    def add_local_file(self, path, save=True):
+    def add_local_file(self, path, save=True, auto_load=True):
         if not path:
             return
         if path not in self.playlist:
@@ -1750,10 +1818,10 @@ class BingeBoxPlayer(QMainWindow):
             self.playlist_list.addItem(item)
             self.request_thumbnail(path, item)
             
-            if len(self.playlist) == 1:
+            if len(self.playlist) == 1 and auto_load:
                 self.load_video(0)
 
-    def add_local_files(self, paths):
+    def add_local_files(self, paths, auto_load=True):
         if not paths:
             return
         added = False
@@ -1770,7 +1838,7 @@ class BingeBoxPlayer(QMainWindow):
                 added = True
         if added:
             self.save_settings()
-        if first_file and len(self.playlist) > 0:
+        if first_file and len(self.playlist) > 0 and auto_load:
             self.load_video(0)
 
     def populate_playlist_list(self):
@@ -1808,7 +1876,7 @@ class BingeBoxPlayer(QMainWindow):
         else:
             self.current_index = -1
 
-    def start_one_click_remux(self):
+    def start_one_click_remux(self, retry_without_subs=False):
         if self.current_index < 0 or self.current_index >= len(self.playlist):
             self.remux_status_lbl.setText("❌ No active video to remux!")
             QTimer.singleShot(3000, lambda: self.remux_status_lbl.setText(""))
@@ -1839,19 +1907,26 @@ class BingeBoxPlayer(QMainWindow):
             output_path = os.path.join(input_dir, output_name)
             counter += 1
             
-        self.remux_status_lbl.setText(f"⚡ Remuxing to {os.path.basename(output_path)}...")
+        if retry_without_subs:
+            self.remux_status_lbl.setText(f"⚡ Retrying {os.path.basename(output_path)} without subtitles...")
+        else:
+            self.remux_status_lbl.setText(f"⚡ Remuxing to {os.path.basename(output_path)}...")
         self.remux_btn.setEnabled(False)
         
         # Determine format-specific ffmpeg lossless remux arguments
-        if output_ext == ".mkv":
-            args = ["-nostdin", "-loglevel", "error", "-y", "-i", input_path, "-map", "0", "-c", "copy", output_path]
+        if retry_without_subs:
+            args = ["-nostdin", "-loglevel", "error", "-y", "-i", input_path, "-map", "0:v", "-map", "0:a?", "-c", "copy", "-sn", output_path]
         else:
-            args = ["-nostdin", "-loglevel", "error", "-y", "-i", input_path, "-map", "0", "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text", output_path]
+            maps = ["-map", "0:v", "-map", "0:a?", "-map", "0:s?"]
+            if output_ext == ".mkv":
+                args = ["-nostdin", "-loglevel", "error", "-y", "-i", input_path, *maps, "-c", "copy", "-c:s", "srt", output_path]
+            else:
+                args = ["-nostdin", "-loglevel", "error", "-y", "-i", input_path, *maps, "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text", output_path]
             
         # Run QProcess in background
         self.remux_process = QProcess(self)
         self.remux_process.errorOccurred.connect(lambda err, op=output_path: self.remux_error(err, op))
-        self.remux_process.finished.connect(lambda exit_code, exit_status, op=output_path: self.remux_finished(exit_code, exit_status, op))
+        self.remux_process.finished.connect(lambda exit_code, exit_status, op=output_path, is_retry=retry_without_subs, o_ext=output_ext: self.remux_finished(exit_code, exit_status, op, is_retry, o_ext))
         self.remux_process.start(FFMPEG_BIN, args)
 
     def remux_error(self, error, output_path):
@@ -1864,21 +1939,26 @@ class BingeBoxPlayer(QMainWindow):
         self.remux_status_lbl.setText("❌ Remux process error occurred!")
         QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
 
-    def remux_finished(self, exit_code, exit_status, output_path):
-        self.remux_btn.setEnabled(True)
+    def remux_finished(self, exit_code, exit_status, output_path, is_retry=False, output_ext=""):
         if exit_code == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            self.remux_btn.setEnabled(True)
             filename = os.path.basename(output_path)
             self.remux_status_lbl.setText(f"✅ Saved as {filename}!")
             self.add_local_file(output_path)
+            QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
         else:
             if os.path.exists(output_path):
                 try:
                     os.remove(output_path)
                 except Exception:
                     pass
+            # If MP4 remux failed and we haven't retried without subtitles yet, retry now
+            if not is_retry and output_ext == ".mp4":
+                self.start_one_click_remux(retry_without_subs=True)
+                return
+            self.remux_btn.setEnabled(True)
             self.remux_status_lbl.setText("❌ Remux failed or was aborted!")
-            
-        QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
+            QTimer.singleShot(5000, lambda: self.remux_status_lbl.setText(""))
 
     def clear_playlist(self):
         if self.mpv_player:
@@ -1902,10 +1982,10 @@ class BingeBoxPlayer(QMainWindow):
 
     def playlist_item_clicked(self, item):
         idx = self.playlist_list.row(item)
-        self.load_video(idx)
+        self.load_video(idx, autoplay=True)
         self.play_video()
 
-    def load_video(self, index):
+    def load_video(self, index, autoplay=True):
         if index < 0 or index >= len(self.playlist):
             return False
             
@@ -1922,7 +2002,7 @@ class BingeBoxPlayer(QMainWindow):
         is_url = path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://"))
         if not is_url:
             if not os.path.exists(path) or (os.path.isfile(path) and os.path.getsize(path) == 0):
-                print(f"File not found or empty: {path}")
+                logging.warning(f"File not found or empty: {path}")
                 self._is_loading = False
                 return False
             
@@ -1930,7 +2010,7 @@ class BingeBoxPlayer(QMainWindow):
         if self.mpv_player:
             try:
                 self.mpv_player.play(path)
-                self.mpv_player.pause = False
+                self.mpv_player.pause = not autoplay
                 self.mpv_player.mute = getattr(self, 'is_muted', False)
                 vol_val = self.volume_slider.value() if hasattr(self, 'volume_slider') else getattr(self, 'volume', 80)
                 self.mpv_player.volume = vol_val
@@ -1988,9 +2068,14 @@ class BingeBoxPlayer(QMainWindow):
         self.total_time_lbl.setText("00:00")
         
         # Sync play button state and progress timer
-        self.play_btn.setText("⏸")
-        if hasattr(self, 'timer') and not self.timer.isActive():
-            self.timer.start()
+        if autoplay:
+            self.play_btn.setText("⏸")
+            if hasattr(self, 'timer') and not self.timer.isActive():
+                self.timer.start()
+        else:
+            self.play_btn.setText("▶")
+            if hasattr(self, 'timer') and self.timer.isActive():
+                self.timer.stop()
         
         self._is_loading = False
         return True
@@ -2005,27 +2090,34 @@ class BingeBoxPlayer(QMainWindow):
         # Only take snapshot if video is local and thumbnail is not already cached
         if 0 <= self.current_index < len(self.playlist):
             video_path = self.playlist[self.current_index]
-            if not video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
-                import hashlib
-                path_hash = hashlib.md5(video_path.encode('utf-8')).hexdigest()
-                cached_thumb = os.path.join(get_thumbnails_cache_dir(), f"{path_hash}.png")
-                if not os.path.exists(cached_thumb):
-                    QTimer.singleShot(1500, self.capture_mpv_snapshot)
+            cached_thumb = get_thumbnail_cache_path(video_path)
+            if cached_thumb and not os.path.exists(cached_thumb):
+                QTimer.singleShot(1500, self.capture_mpv_snapshot)
 
     def capture_mpv_snapshot(self, retry_count=0):
         if not self.playlist or self.current_index < 0 or self.current_index >= len(self.playlist):
             return
             
         video_path = self.playlist[self.current_index]
-        if video_path.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://")):
+        thumb_path = get_thumbnail_cache_path(video_path)
+        if not thumb_path or (os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0):
             return
+            
+        if video_path in self._pending_thumbnail_paths:
+            return
+        self._pending_thumbnail_paths.add(video_path)
             
         worker = ThumbnailWorker(video_path)
         self._active_workers.add(worker)
         def on_finished(v_path, t_path):
             self._active_workers.discard(worker)
+            self._pending_thumbnail_paths.discard(v_path)
             self.update_ui_thumbnails(v_path, t_path)
+        def on_failed(v_path):
+            self._active_workers.discard(worker)
+            self._pending_thumbnail_paths.discard(v_path)
         worker.signals.finished.connect(on_finished)
+        worker.signals.failed.connect(on_failed)
         self.thread_pool.start(worker)
 
     def update_ui_thumbnails(self, video_path, thumb_path):
@@ -2254,7 +2346,7 @@ class BingeBoxPlayer(QMainWindow):
                 
             # 2. Pre-amp Volume Gain
             if hasattr(self, 'preamp') and self.preamp != 0:
-                filters.append(f"volume=volume={self.preamp:.1f}dB")
+                filters.append(f"lavfi=[volume=volume={self.preamp:.1f}dB]")
                 
             # 3. Auto Volume Normalizer (AGC)
             if getattr(self, 'normalizer', False):
@@ -2284,7 +2376,10 @@ class BingeBoxPlayer(QMainWindow):
         
         gains = presets.get(index, [0.0] * 10)
         for i in range(10):
-            self.eq_sliders[i].setValue(int(gains[i]))
+            slider = self.eq_sliders[i]
+            slider.blockSignals(True)
+            slider.setValue(int(gains[i]))
+            slider.blockSignals(False)
             self.eq_bands[i] = gains[i]
         self.save_settings()
         self.apply_equalizer_settings()
@@ -2619,11 +2714,12 @@ class BingeBoxPlayer(QMainWindow):
                 self.handle_rebinding_key(event)
                 return True # Consume it so the focused widget doesn't process it!
                 
-            # If the focused widget is a text input, combo box, or popup view, bypass shortcuts
-            focused = QApplication.focusWidget()
-            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QAbstractItemView)):
+            # If a popup widget (e.g. combo popup menu) is active, allow native popup handling
+            if QApplication.activePopupWidget() is not None:
                 return False
-            if isinstance(obj, (QComboBox, QAbstractItemView, QMenu)):
+                
+            focused = QApplication.focusWidget()
+            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
                 return False
                 
             key = event.key()
@@ -2694,28 +2790,28 @@ class BingeBoxPlayer(QMainWindow):
             event.ignore()
 
     def handle_dropped_urls(self, urls):
-        collected_files = []
-        for url in urls:
-            fp = url.toLocalFile() if hasattr(url, "toLocalFile") else str(url)
-            if os.path.exists(fp):
-                if os.path.isdir(fp):
-                    for root, _, files in os.walk(fp):
-                        for f in sorted(files):
-                            if f.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
-                                collected_files.append(os.path.join(root, f))
-                elif fp.lower().endswith(SUPPORTED_MEDIA_EXTENSIONS):
-                    collected_files.append(fp)
-        if collected_files:
+        raw_paths = [url.toLocalFile() if hasattr(url, "toLocalFile") else str(url) for url in urls]
+        raw_paths = [p for p in raw_paths if p]
+        if not raw_paths:
+            return
+            
+        def on_scan_done(collected_files):
+            if not collected_files:
+                return
             had_files = len(self.playlist) > 0
             first_new_path = collected_files[0]
-            self.add_local_files(collected_files)
+            self.add_local_files(collected_files, auto_load=False)
             if not had_files and len(self.playlist) > 0:
-                self.load_video(0)
+                self.load_video(0, autoplay=True)
                 self.play_video()
             elif first_new_path in self.playlist:
                 idx = self.playlist.index(first_new_path)
-                self.load_video(idx)
+                self.load_video(idx, autoplay=True)
                 self.play_video()
+
+        worker = FolderScanWorker(raw_paths)
+        worker.signals.finished.connect(on_scan_done)
+        self.thread_pool.start(worker)
 
     def trigger_shortcut_action(self, action):
         if action == "play_pause":
@@ -2878,7 +2974,7 @@ class BingeBoxPlayer(QMainWindow):
                 self.sub_file_lbl.setText(os.path.basename(file_path))
                 QTimer.singleShot(500, self.refresh_subtitle_tracks)
             except Exception as e:
-                print("Failed to load subtitle:", e)
+                logging.warning(f"Failed to load subtitle: {e}")
             
     def adjust_sub_delay(self, delta):
         if self.mpv_player:
@@ -2926,7 +3022,7 @@ class BingeBoxPlayer(QMainWindow):
             try:
                 self.mpv_player.sid = track_id
             except Exception as e:
-                print(f"[Subtitles] Error updating subtitle track to {track_id}: {e}")
+                logging.warning(f"[Subtitles] Error updating subtitle track to {track_id}: {e}")
 
     # ==========================================================================
     # BOOKMARKS CONTROLS
@@ -3025,16 +3121,16 @@ class BingeBoxPlayer(QMainWindow):
                     self.library_list.addItem(list_item)
                     self.request_thumbnail(full_path, list_item)
         except Exception as e:
-            print("Failed to scan directory:", e)
+            logging.warning(f"Failed to scan directory: {e}")
             self.lib_path_lbl.setText("❌ Failed to scan directory")
             
     def library_item_clicked(self, item):
         file_path = item.data(Qt.ItemDataRole.UserRole)
         if file_path:
-            self.add_local_file(file_path)
+            self.add_local_file(file_path, auto_load=False)
             if file_path in self.playlist:
                 idx = self.playlist.index(file_path)
-                self.load_video(idx)
+                self.load_video(idx, autoplay=True)
                 self.play_video()
 
     def open_buy_me_a_coffee(self):
@@ -3081,6 +3177,9 @@ class BingeBoxPlayer(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event):
+        if hasattr(self, '_save_settings_timer') and self._save_settings_timer.isActive():
+            self._save_settings_timer.stop()
+        self._do_save_settings()
         if hasattr(self, '_seek_timer') and self._seek_timer and self._seek_timer.isActive():
             self._seek_timer.stop()
         if hasattr(self, 'remux_process') and self.remux_process:
@@ -3119,7 +3218,8 @@ class BingeBoxPlayer(QMainWindow):
 # MAIN EXECUTION ENTRY POINT
 # ==========================================================================
 
-IPC_SERVER_NAME = "BingeBox_SingleInstance_IPC_v1"
+username = getpass.getuser()
+IPC_SERVER_NAME = f"BingeBox_IPC_{username}"
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -3136,21 +3236,36 @@ if __name__ == "__main__":
     # Check if an instance is already running via QLocalSocket
     client_socket = QLocalSocket()
     client_socket.connectToServer(IPC_SERVER_NAME)
-    if client_socket.waitForConnected(500):
-        # Existing instance found! Send target file path to it and exit.
-        if initial_file:
-            client_socket.write(initial_file.encode("utf-8"))
-            client_socket.flush()
-            client_socket.waitForBytesWritten(1000)
+    if client_socket.waitForConnected(300):
+        # Existing instance found! Send target file path or focus command to it and exit.
+        msg = initial_file if initial_file else "__FOCUS__"
+        client_socket.write(msg.encode("utf-8"))
+        client_socket.flush()
+        client_socket.waitForBytesWritten(1000)
         client_socket.disconnectFromServer()
         sys.exit(0)
         
-    # Primary instance: setup local IPC server
-    player = BingeBoxPlayer(initial_file=initial_file)
-    
+    # Primary instance: setup local IPC server before instantiating player
     server = QLocalServer()
-    # Clean up stale socket file if left over from a prior hard termination
+    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
     QLocalServer.removeServer(IPC_SERVER_NAME)
+
+    if not server.listen(IPC_SERVER_NAME):
+        # Explorer multi-file launch collision race: retry connecting
+        for _ in range(5):
+            QThread.msleep(100)
+            client_socket.connectToServer(IPC_SERVER_NAME)
+            if client_socket.waitForConnected(300):
+                msg = initial_file if initial_file else "__FOCUS__"
+                client_socket.write(msg.encode("utf-8"))
+                client_socket.flush()
+                client_socket.waitForBytesWritten(1000)
+                client_socket.disconnectFromServer()
+                sys.exit(0)
+        QLocalServer.removeServer(IPC_SERVER_NAME)
+        server.listen(IPC_SERVER_NAME)
+
+    player = BingeBoxPlayer(initial_file=initial_file)
     
     def on_new_ipc_connection():
         conn = server.nextPendingConnection()
@@ -3158,13 +3273,13 @@ if __name__ == "__main__":
             return
         def on_ready_read():
             data = conn.readAll().data().decode("utf-8", errors="ignore").strip()
-            if data:
+            if data and data != "__FOCUS__":
                 is_net = data.startswith(("http://", "https://", "rtmp://", "rtsp://", "mms://"))
                 if is_net or os.path.exists(data):
-                    player.add_local_file(data)
+                    player.add_local_file(data, auto_load=False)
                     if data in player.playlist:
                         idx = player.playlist.index(data)
-                        player.load_video(idx)
+                        player.load_video(idx, autoplay=True)
                         player.play_video()
             # Bring player window to front
             player.setWindowState(player.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
@@ -3176,7 +3291,6 @@ if __name__ == "__main__":
         conn.readyRead.connect(on_ready_read)
         
     server.newConnection.connect(on_new_ipc_connection)
-    server.listen(IPC_SERVER_NAME)
     
     # Clean up server on close
     orig_close_event = player.closeEvent

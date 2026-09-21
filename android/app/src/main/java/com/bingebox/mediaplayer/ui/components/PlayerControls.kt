@@ -1,6 +1,7 @@
 package com.bingebox.mediaplayer.ui.components
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,6 +35,10 @@ fun PlayerControls(
     abStartMs: Long? = null,
     abEndMs: Long? = null,
     isLocked: Boolean = false,
+    hasPrevious: Boolean = true,
+    hasNext: Boolean = true,
+    onPreviousClick: (() -> Unit)? = null,
+    onNextClick: (() -> Unit)? = null,
     onPlayPauseToggle: () -> Unit,
     onSeek: (Long) -> Unit,
     onSeekRelative: (Int) -> Unit = {},
@@ -137,108 +142,119 @@ fun PlayerControls(
             ) {
                 // Top Header Bar
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
                         onClick = onBackClick,
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(38.dp)
                             .background(Color(0x55000000), CircleShape)
+                            .border(1.dp, Color(0x22FFFFFF), CircleShape)
                     ) {
                         Icon(
                             Icons.Default.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .padding(horizontal = 12.dp)
+                            .padding(horizontal = 10.dp)
                     ) {
                         Text(
                             text = title,
                             color = Color.White,
-                            fontSize = 15.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "BingeBox • Hardware Accelerated",
+                            text = "BingeBox • libmpv GPU",
                             color = Color(0xFFA78BFA),
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Normal
                         )
                     }
 
-                    // Top Action Icons
+                    // Top Action Icons (Compact & Responsive)
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Aspect Ratio button
-                        TextButton(
-                            onClick = onAspectRatioCycle,
-                            modifier = Modifier
-                                .height(34.dp)
-                                .background(Color(0x44FFFFFF), RoundedCornerShape(17.dp)),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0x44000000),
+                            border = BorderStroke(1.dp, Color(0x22FFFFFF)),
+                            modifier = Modifier.clickable(onClick = onAspectRatioCycle)
                         ) {
-                            Icon(
-                                Icons.Default.AspectRatio,
-                                contentDescription = "Aspect Ratio",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = aspectRatioName,
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.AspectRatio,
+                                    contentDescription = "Aspect Ratio",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    text = aspectRatioName,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
                         // Speed button
-                        TextButton(
-                            onClick = onSpeedCycle,
-                            modifier = Modifier
-                                .height(34.dp)
-                                .background(Color(0x44FFFFFF), RoundedCornerShape(17.dp)),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0x44000000),
+                            border = BorderStroke(1.dp, Color(0x22FFFFFF)),
+                            modifier = Modifier.clickable(onClick = onSpeedCycle)
                         ) {
-                            Icon(
-                                Icons.Default.Speed,
-                                contentDescription = "Speed",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(2.dp))
-                            Text(
-                                text = "${speed}x",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Speed,
+                                    contentDescription = "Speed",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    text = "${speed}x",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
                         // Equalizer button
                         IconButton(
                             onClick = onEqualizerClick,
                             modifier = Modifier
-                                .size(36.dp)
-                                .background(Color(0x44FFFFFF), CircleShape)
+                                .size(32.dp)
+                                .background(Color(0x44000000), CircleShape)
+                                .border(1.dp, Color(0x22FFFFFF), CircleShape)
                         ) {
                             Icon(
                                 Icons.Default.GraphicEq,
                                 contentDescription = "Equalizer",
                                 tint = Color.White,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
 
@@ -246,14 +262,15 @@ fun PlayerControls(
                         IconButton(
                             onClick = onSubtitlesClick,
                             modifier = Modifier
-                                .size(36.dp)
-                                .background(Color(0x44FFFFFF), CircleShape)
+                                .size(32.dp)
+                                .background(Color(0x44000000), CircleShape)
+                                .border(1.dp, Color(0x22FFFFFF), CircleShape)
                         ) {
                             Icon(
                                 Icons.Default.Subtitles,
                                 contentDescription = "Subtitles",
                                 tint = Color.White,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
 
@@ -261,56 +278,84 @@ fun PlayerControls(
                         IconButton(
                             onClick = onPipClick,
                             modifier = Modifier
-                                .size(36.dp)
-                                .background(Color(0x44FFFFFF), CircleShape)
+                                .size(32.dp)
+                                .background(Color(0x44000000), CircleShape)
+                                .border(1.dp, Color(0x22FFFFFF), CircleShape)
                         ) {
                             Icon(
                                 Icons.Default.PictureInPictureAlt,
                                 contentDescription = "PiP",
                                 tint = Color.White,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
                 }
 
-                // Center Playback Action Row
+                // Center Playback Action Row (Prev, -10s, Play/Pause, +10s, Next)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 16.dp),
+                        .padding(vertical = 12.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Previous Video
+                    IconButton(
+                        onClick = { onPreviousClick?.invoke() },
+                        enabled = hasPrevious && onPreviousClick != null,
+                        modifier = Modifier
+                            .size(46.dp)
+                            .background(
+                                if (hasPrevious && onPreviousClick != null) Color(0x55000000) else Color(0x22000000),
+                                CircleShape
+                            )
+                            .border(
+                                1.dp,
+                                if (hasPrevious && onPreviousClick != null) Color(0x33FFFFFF) else Color(0x11FFFFFF),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            Icons.Default.SkipPrevious,
+                            contentDescription = "Previous Video",
+                            tint = if (hasPrevious && onPreviousClick != null) Color.White else Color(0x55FFFFFF),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+
+                    Spacer(Modifier.width(14.dp))
+
                     // Rewind -10s
                     IconButton(
                         onClick = { onSeekRelative(-10) },
                         modifier = Modifier
-                            .size(52.dp)
-                            .background(Color(0x4D000000), CircleShape)
+                            .size(48.dp)
+                            .background(Color(0x55000000), CircleShape)
                             .border(1.dp, Color(0x33FFFFFF), CircleShape)
                     ) {
                         Icon(
                             Icons.Default.Replay10,
                             contentDescription = "Rewind 10s",
                             tint = Color.White,
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(26.dp)
                         )
                     }
 
-                    Spacer(Modifier.width(36.dp))
+                    Spacer(Modifier.width(18.dp))
 
                     // Big Glowing Play / Pause Button
                     Box(
                         modifier = Modifier
                             .size(68.dp)
-                            .shadow(16.dp, CircleShape, spotColor = Color(0xFF8B5CF6))
+                            .shadow(20.dp, CircleShape, spotColor = Color(0xFF8B5CF6))
                             .background(
                                 Brush.linearGradient(
                                     listOf(Color(0xFF8B5CF6), Color(0xFF7C3AED))
                                 ),
                                 CircleShape
                             )
+                            .border(1.5.dp, Color.White.copy(alpha = 0.35f), CircleShape)
                             .clickable(onClick = onPlayPauseToggle),
                         contentAlignment = Alignment.Center
                     ) {
@@ -318,25 +363,51 @@ fun PlayerControls(
                             if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             tint = Color.White,
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier.size(38.dp)
                         )
                     }
 
-                    Spacer(Modifier.width(36.dp))
+                    Spacer(Modifier.width(18.dp))
 
                     // Forward +10s
                     IconButton(
                         onClick = { onSeekRelative(10) },
                         modifier = Modifier
-                            .size(52.dp)
-                            .background(Color(0x4D000000), CircleShape)
+                            .size(48.dp)
+                            .background(Color(0x55000000), CircleShape)
                             .border(1.dp, Color(0x33FFFFFF), CircleShape)
                     ) {
                         Icon(
                             Icons.Default.Forward10,
                             contentDescription = "Forward 10s",
                             tint = Color.White,
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+
+                    Spacer(Modifier.width(14.dp))
+
+                    // Next Video
+                    IconButton(
+                        onClick = { onNextClick?.invoke() },
+                        enabled = hasNext && onNextClick != null,
+                        modifier = Modifier
+                            .size(46.dp)
+                            .background(
+                                if (hasNext && onNextClick != null) Color(0x55000000) else Color(0x22000000),
+                                CircleShape
+                            )
+                            .border(
+                                1.dp,
+                                if (hasNext && onNextClick != null) Color(0x33FFFFFF) else Color(0x11FFFFFF),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            Icons.Default.SkipNext,
+                            contentDescription = "Next Video",
+                            tint = if (hasNext && onNextClick != null) Color.White else Color(0x55FFFFFF),
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                 }

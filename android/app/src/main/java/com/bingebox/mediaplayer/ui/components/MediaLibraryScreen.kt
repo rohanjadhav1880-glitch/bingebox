@@ -1,6 +1,7 @@
 package com.bingebox.mediaplayer.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +32,7 @@ fun MediaLibraryScreen(
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var showAboutDialog by remember { mutableStateOf(false) }
 
     val filteredVideos = remember(videos, searchQuery) {
         if (searchQuery.isBlank()) videos
@@ -106,17 +108,41 @@ fun MediaLibraryScreen(
                 }
             }
 
-            Button(
-                onClick = onOpenFilePicker,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF8B5CF6)
-                ),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-            ) {
-                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Open File", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Info / About Dialog Button
+                IconButton(
+                    onClick = { showAboutDialog = true },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(Color(0xFF151923), RoundedCornerShape(12.dp))
+                        .border(
+                            1.dp,
+                            Color(0xFF2E384D),
+                            RoundedCornerShape(12.dp)
+                        )
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = "About BingeBox",
+                        tint = Color(0xFFA78BFA),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(Modifier.width(8.dp))
+
+                Button(
+                    onClick = onOpenFilePicker,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF8B5CF6)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Open File", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
 
@@ -352,6 +378,10 @@ fun MediaLibraryScreen(
                 }
             }
         }
+    }
+
+    if (showAboutDialog) {
+        AboutDialog(onDismiss = { showAboutDialog = false })
     }
 }
 

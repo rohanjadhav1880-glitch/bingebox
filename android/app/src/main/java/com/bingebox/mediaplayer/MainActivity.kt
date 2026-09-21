@@ -158,7 +158,24 @@ fun MainAppContainer(
     var audioDelayMs by remember { mutableStateOf(0f) }
 
     var deviceVideos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
+    var currentPlaylist by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
+    var currentVideoIndex by remember { mutableStateOf(-1) }
     var userInteractionCount by remember { mutableStateOf(0) }
+
+    fun playVideoAtIndex(index: Int) {
+        if (index in currentPlaylist.indices) {
+            val video = currentPlaylist[index]
+            currentVideoIndex = index
+            activeVideo = video
+            currentPosMs = 0L
+            durationMs = 0L
+            isPlaying = true
+            controlsVisible = true
+            abStartMs = null
+            abEndMs = null
+            MPVPlayerManager.play(video.path)
+        }
+    }
 
     fun refreshDeviceVideos() {
         try {
@@ -197,14 +214,9 @@ fun MainAppContainer(
     ) { uri: Uri? ->
         uri?.let {
             val video = resolveUriToVideoItem(context, it)
-            activeVideo = video
-            currentPosMs = 0L
-            durationMs = 0L
-            isPlaying = true
-            controlsVisible = true
-            abStartMs = null
-            abEndMs = null
-            MPVPlayerManager.play(video.path)
+            currentPlaylist = listOf(video)
+            currentVideoIndex = 0
+            playVideoAtIndex(0)
         }
     }
 
@@ -212,14 +224,9 @@ fun MainAppContainer(
     LaunchedEffect(externalUri) {
         externalUri?.let { uri ->
             val video = resolveUriToVideoItem(context, uri)
-            activeVideo = video
-            currentPosMs = 0L
-            durationMs = 0L
-            isPlaying = true
-            controlsVisible = true
-            abStartMs = null
-            abEndMs = null
-            MPVPlayerManager.play(video.path)
+            currentPlaylist = listOf(video)
+            currentVideoIndex = 0
+            playVideoAtIndex(0)
             onExternalUriHandled()
         }
     }
@@ -284,6 +291,27 @@ fun MainAppContainer(
                         abStartMs = abStartMs,
                         abEndMs = abEndMs,
                         isLocked = isLocked,
+                        hasPrevious = currentVideoIndex > 0 || currentPlaylist.size > 1,
+                        hasNext = (currentVideoIndex in 0 until (currentPlaylist.size - 1)) || currentPlaylist.size > 1,
+                        onPreviousClick = {
+                            if (currentPosMs > 3000L) {
+                                MPVLib.command(arrayOf("seek", "0", "absolute"))
+                                currentPosMs = 0L
+                            } else if (currentVideoIndex > 0) {
+                                playVideoAtIndex(currentVideoIndex - 1)
+                            } else if (currentPlaylist.size > 1) {
+                                playVideoAtIndex(currentPlaylist.size - 1)
+                            }
+                            userInteractionCount++
+                        },
+                        onNextClick = {
+                            if (currentVideoIndex in 0 until (currentPlaylist.size - 1)) {
+                                playVideoAtIndex(currentVideoIndex + 1)
+                            } else if (currentPlaylist.size > 1) {
+                                playVideoAtIndex(0)
+                            }
+                            userInteractionCount++
+                        },
                         onPlayPauseToggle = {
                             isPlaying = !isPlaying
                             MPVLib.command(arrayOf("cycle", "pause"))
@@ -301,6 +329,7 @@ fun MainAppContainer(
                         onBackClick = {
                             MPVPlayerManager.stop()
                             activeVideo = null
+                            currentVideoIndex = -1
                         },
                         onSpeedCycle = {
                             currentSpeedIdx = (currentSpeedIdx + 1) % speeds.size
@@ -365,14 +394,9 @@ fun MainAppContainer(
             MediaLibraryScreen(
                 videos = deviceVideos,
                 onVideoSelect = { video ->
-                    activeVideo = video
-                    currentPosMs = 0L
-                    durationMs = 0L
-                    isPlaying = true
-                    controlsVisible = true
-                    abStartMs = null
-                    abEndMs = null
-                    MPVPlayerManager.play(video.path)
+                    currentPlaylist = deviceVideos
+                    val idx = deviceVideos.indexOfFirst { it.id == video.id }
+                    playVideoAtIndex(if (idx >= 0) idx else 0)
                 },
                 onOpenFilePicker = { filePickerLauncher.launch(arrayOf("video/*")) }
             )
